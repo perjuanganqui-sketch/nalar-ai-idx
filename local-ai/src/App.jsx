@@ -64,6 +64,40 @@ function formatDate(timestamp) {
   }).format(timestamp);
 }
 
+function getTechnicalSnapshot(candles) {
+  if (!candles.length) return null;
+  const latest = candles.at(-1);
+  const recent = candles.slice(-20);
+  const recentCandles = candles.slice(-15);
+  const changes = recentCandles.slice(1).map((candle, index) => candle.close - recentCandles[index].close);
+  const gains = changes.reduce((total, change) => total + Math.max(change, 0), 0);
+  const losses = changes.reduce((total, change) => total + Math.max(-change, 0), 0);
+  const rsi = losses === 0 ? (gains === 0 ? 50 : 100) : 100 - 100 / (1 + gains / losses);
+  const trueRanges = recentCandles.slice(1).map((candle, index) => {
+    const previousClose = recentCandles[index].close;
+    return Math.max(candle.high - candle.low, Math.abs(candle.high - previousClose), Math.abs(candle.low - previousClose));
+  });
+  const atr = trueRanges.length ? trueRanges.reduce((total, range) => total + range, 0) / trueRanges.length : null;
+  const recentVolumes = candles.slice(-3).map((candle) => candle.volume).filter(Number.isFinite);
+  const baselineVolumes = candles.slice(-15, -3).map((candle) => candle.volume).filter(Number.isFinite);
+  const volumeRatio = recentVolumes.length && baselineVolumes.length
+    ? (recentVolumes.reduce((total, volume) => total + volume, 0) / recentVolumes.length)
+      / (baselineVolumes.reduce((total, volume) => total + volume, 0) / baselineVolumes.length || 1)
+    : null;
+  const ema9 = candles.slice(0, 9).reduce((average, candle) => average + candle.close, 0) / Math.min(candles.length, 9);
+  const emaMultiplier = 2 / 10;
+  const ema = candles.slice(9).reduce((average, candle) => ((candle.close - average) * emaMultiplier) + average, ema9);
+  return {
+    rsi,
+    atr,
+    volumeRatio,
+    support: Math.min(...recent.map((candle) => candle.low)),
+    resistance: Math.max(...recent.map((candle) => candle.high)),
+    ema9: ema,
+    lastMove: latest.close - latest.open,
+  };
+}
+
 function pathFor(values, width, height, padding = 0) {
   if (values.length < 2) return "";
   const min = Math.min(...values);
@@ -253,6 +287,7 @@ export default function App() {
   const [aiSignal, setAiSignal] = useState(null);
   const [aiSignalError, setAiSignalError] = useState("");
   const [aiSignalErrorTicker, setAiSignalErrorTicker] = useState("");
+  const [aiSignalLoadingTicker, setAiSignalLoadingTicker] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [favoriteTickers, setFavoriteTickers] = useState([]);
@@ -264,6 +299,12 @@ export default function App() {
   const [showAverages, setShowAverages] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
   const [showRsi, setShowRsi] = useState(true);
+  const [capital, setCapital] = useState("10000000");
+  const [riskPercent, setRiskPercent] = useState("1");
+  const [stopPercent, setStopPercent] = useState("1");
+  const [rewardRisk, setRewardRisk] = useState("2");
+  const [paperJournal, setPaperJournal] = useState([]);
+  const [watchlistSort, setWatchlistSort] = useState("change");
   const [activeTool, setActiveTool] = useState("select");
   const [drawingsByTicker, setDrawingsByTicker] = useState({});
   const [pendingPoint, setPendingPoint] = useState(null);
@@ -272,6 +313,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const previousPrices = useRef(new Map());
   const priceFlashTimers = useRef(new Map());
+  const aiSignalRequestId = useRef(0);
   const quotes = useMemo(() => {
     const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
     if (stockData) stockQuotes.set(stockData.ticker, stockData);
@@ -289,7 +331,9 @@ export default function App() {
     !removedTickers.includes(quote.ticker)
     && (!showFavorites || favoriteTickers.includes(quote.ticker))
     && `${quote.ticker} ${quote.name}`.toLowerCase().includes(query.toLowerCase())
-  ));
+  )).sort((left, right) => watchlistSort === "volume"
+    ? (right.volume ?? 0) - (left.volume ?? 0)
+    : (right.changePercent ?? -Infinity) - (left.changePercent ?? -Infinity));
   const searchResults = query.trim()
     ? (marketData?.instruments ?? [])
       .filter((instrument) => (
@@ -305,6 +349,18 @@ export default function App() {
   const visibleAiSignalError = aiSignalErrorTicker === selectedTicker ? aiSignalError : "";
   const visibleStockError = stockErrorTicker === selectedTicker ? stockError : "";
   const latestCandle = candles.at(-1);
+  const technicalSnapshot = useMemo(() => getTechnicalSnapshot(candles), [candles]);
+  const entryPrice = selectedStockData?.price ?? selectedQuote?.price;
+  const capitalValue = Number(capital);
+  const riskValue = Number(riskPercent);
+  const stopValue = Number(stopPercent);
+  const rewardRiskValue = Number(rewardRisk);
+  const riskAmount = capitalValue > 0 && riskValue > 0 && riskValue <= 100 ? capitalValue * riskValue / 100 : 0;
+  const stopDistance = Number.isFinite(entryPrice) && stopValue > 0 ? entryPrice * stopValue / 100 : 0;
+  const lotSize = stopDistance > 0 ? Math.max(0, Math.floor(riskAmount / (stopDistance * 100))) : 0;
+  const targetPrice = Number.isFinite(entryPrice) && stopDistance > 0 && rewardRiskValue > 0
+    ? entryPrice + stopDistance * rewardRiskValue
+    : NaN;
   const currentDrawings = drawingsByTicker[selectedTicker] ?? emptyArray;
   const isFavorite = favoriteTickers.includes(selectedTicker);
   const isInWatchlist = !removedTickers.includes(selectedTicker);
@@ -364,6 +420,52 @@ export default function App() {
         ? current.filter((item) => item !== ticker)
         : [...current, ticker]
     ));
+  }
+
+  async function requestAiSignal(ticker) {
+    const requestId = aiSignalRequestId.current + 1;
+    aiSignalRequestId.current = requestId;
+    setAiSignalLoadingTicker(ticker);
+    setAiSignalError("");
+    setAiSignalErrorTicker("");
+    try {
+      const response = await fetch(`/api/market/signals/${ticker}`, { cache: "no-store" });
+      const data = await readApiResponse(response);
+      if (!response.ok) throw new Error(data.error || `Analisis AI gagal (HTTP ${response.status}).`);
+      if (
+        data.ticker !== ticker
+        || !["BUY", "SELL", "WAIT"].includes(data.signal)
+        || typeof data.rationale !== "string"
+        || !Number.isFinite(data.confidence)
+      ) {
+        throw new Error("Respons sinyal AI tidak lengkap.");
+      }
+      if (requestId === aiSignalRequestId.current) {
+        setAiSignal(data);
+        setAiSignalError("");
+        setAiSignalErrorTicker("");
+      }
+    } catch {
+      if (requestId === aiSignalRequestId.current) {
+        setAiSignalError("Analisis belum tersedia. Coba lagi beberapa saat.");
+        setAiSignalErrorTicker(ticker);
+      }
+    } finally {
+      if (requestId === aiSignalRequestId.current) setAiSignalLoadingTicker("");
+    }
+  }
+
+  function recordPaperPlan() {
+    if (!Number.isFinite(entryPrice) || lotSize <= 0 || !Number.isFinite(targetPrice)) return;
+    setPaperJournal((current) => [{
+      id: `${Date.now()}-${selectedTicker}`,
+      ticker: selectedTicker,
+      time: Date.now(),
+      entry: entryPrice,
+      stop: entryPrice - stopDistance,
+      target: targetPrice,
+      lots: lotSize,
+    }, ...current].slice(0, 20));
   }
 
   function handleChartClick(event, chartBounds) {
@@ -454,38 +556,6 @@ export default function App() {
     return () => { active = false; window.clearInterval(timer); };
   }, [selectedTicker, period, refreshVersion]);
 
-  useEffect(() => {
-    let active = true;
-    async function refreshAiSignal() {
-      try {
-        const response = await fetch(`/api/market/signals/${selectedTicker}`, { cache: "no-store" });
-        const data = await readApiResponse(response);
-        if (!response.ok) throw new Error(data.error || `Analisis AI gagal (HTTP ${response.status}).`);
-        if (
-          data.ticker !== selectedTicker
-          || !["BUY", "SELL", "WAIT"].includes(data.signal)
-          || typeof data.rationale !== "string"
-          || !Number.isFinite(data.confidence)
-        ) {
-          throw new Error("Respons sinyal AI tidak lengkap.");
-        }
-        if (active) {
-          setAiSignal(data);
-          setAiSignalError("");
-          setAiSignalErrorTicker("");
-        }
-      } catch (error) {
-        if (active) {
-          setAiSignalError(error.message);
-          setAiSignalErrorTicker(selectedTicker);
-        }
-      }
-    }
-    refreshAiSignal();
-    const timer = window.setInterval(refreshAiSignal, 30_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [selectedTicker, refreshVersion]);
-
   async function sendMessage(event, suggestedText) {
     event?.preventDefault();
     const text = (suggestedText ?? prompt).trim();
@@ -534,13 +604,17 @@ export default function App() {
           <div className="watchlist-title"><h1>Watchlist</h1></div>
           <div className="watchlist-controls">
             <button className="watchlist-filter" aria-pressed={showFavorites} onClick={() => setShowFavorites((value) => !value)}>{showFavorites ? "Favorit" : "Semua saham"} <span>⌄</span></button>
+            <select className="watchlist-sort" aria-label="Urutkan saham" value={watchlistSort} onChange={(event) => setWatchlistSort(event.target.value)}>
+              <option value="change">% naik</option>
+              <option value="volume">Volume</option>
+            </select>
             <button className="refresh-watchlist" title="Perbarui data" aria-label="Perbarui data" onClick={refreshData}><Icon name="refresh" size={13} /></button>
             <button className="watchlist-add" title={isInWatchlist ? `Hapus ${selectedTicker} dari watchlist` : `Tambahkan ${selectedTicker} ke watchlist`} aria-label={isInWatchlist ? `Hapus ${selectedTicker} dari watchlist` : `Tambahkan ${selectedTicker} ke watchlist`} onClick={() => setRemovedTickers((current) => (isInWatchlist ? [...current, selectedTicker] : current.filter((ticker) => ticker !== selectedTicker)))}>{isInWatchlist ? "−" : "＋"}</button>
           </div>
           <label className="watchlist-search"><Icon name="search" size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari ticker..." /></label>
           <div className="watchlist-columns"><span>INSTRUMEN</span><span>HARGA / PERUBAHAN</span></div>
           <div className="watchlist-scroll">
-            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} onClick={() => setSelectedTicker(quote.ticker)}>
+            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan minta analisis sinyal AI`} onClick={() => { setSelectedTicker(quote.ticker); requestAiSignal(quote.ticker); }}>
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
@@ -551,6 +625,7 @@ export default function App() {
               setAddedTickers((current) => current.includes(instrument.ticker) ? current : [...current, instrument.ticker]);
               setRemovedTickers((current) => current.filter((ticker) => ticker !== instrument.ticker));
               setSelectedTicker(instrument.ticker);
+              requestAiSignal(instrument.ticker);
               setQuery("");
             }}>
               <SymbolLogo ticker={instrument.ticker} color={instrument.color} />
@@ -589,8 +664,8 @@ export default function App() {
           {marketError && <div className="inline-error" role="status">{marketError}</div>}
           {visibleStockError && !selectedStockData && <div className="inline-error" role="alert">{visibleStockError}</div>}
           <div className={`ai-signal-banner ${selectedAiSignal ? `signal-${selectedAiSignal.signal.toLowerCase()}` : ""}`} role="status">
-            <strong>{selectedAiSignal ? `AI ${selectedAiSignal.signal}` : visibleAiSignalError ? "Sinyal AI tidak tersedia" : "AI sedang menganalisis..."}</strong>
-            <span>{selectedAiSignal ? `${selectedAiSignal.rationale} · keyakinan ${selectedAiSignal.confidence}%` : visibleAiSignalError || "Analisis teknikal ticker terpilih sedang dimuat."}</span>
+            <strong>{selectedAiSignal ? `AI ${selectedAiSignal.signal}` : aiSignalLoadingTicker === selectedTicker ? "AI sedang menganalisis..." : visibleAiSignalError ? "Analisis tertunda" : "Sinyal AI"}</strong>
+            <span>{selectedAiSignal ? `${selectedAiSignal.rationale} · keyakinan ${selectedAiSignal.confidence}%` : aiSignalLoadingTicker === selectedTicker ? `Menganalisis ${selectedTicker} berdasarkan data teknikal.` : visibleAiSignalError || `Klik emiten di watchlist untuk meminta analisis ${selectedTicker}.`}</span>
             <small>{selectedAiSignal ? `Sumber ${selectedAiSignal.provider}, data ${formatTime(selectedAiSignal.quoteTime)} WIB · dapat tertunda · bukan rekomendasi personal` : "Data sumber mungkin tertunda; sinyal bukan rekomendasi personal."}</small>
           </div>
 
@@ -623,6 +698,40 @@ export default function App() {
               <span>Low <b className="negative">{formatPrice(selectedStockData?.dayLow ?? selectedQuote?.dayLow)}</b></span><span>Avg <b>—</b></span>
             </div>
             <div className="market-source-line"><i /> Yahoo Finance · {formatQuoteAge(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} · {formatTime(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} WIB</div>
+          </section>
+
+          <section className="scalping-panel" aria-label="Meja scalping dan analisis teknikal">
+            <div className="scalp-heading"><div><strong>Scalping desk</strong><small>Analisis teknikal & simulasi risiko</small></div><span>SIMULASI</span></div>
+            <div className="scalp-snapshot">
+              <div><span>RSI 14</span><strong className={technicalSnapshot?.rsi >= 70 ? "negative" : technicalSnapshot?.rsi <= 30 ? "positive" : ""}>{technicalSnapshot ? technicalSnapshot.rsi.toFixed(1) : "—"}</strong><small>{technicalSnapshot ? technicalSnapshot.rsi >= 70 ? "Jenuh beli" : technicalSnapshot.rsi <= 30 ? "Jenuh jual" : "Netral" : "Data belum cukup"}</small></div>
+              <div><span>ATR 14</span><strong>{formatPrice(technicalSnapshot?.atr)}</strong><small>Rentang rata-rata</small></div>
+              <div><span>Volume relatif</span><strong>{Number.isFinite(technicalSnapshot?.volumeRatio) ? `${technicalSnapshot.volumeRatio.toFixed(2)}×` : "—"}</strong><small>3 candle vs 12 sebelumnya</small></div>
+              <div><span>EMA 9</span><strong>{formatPrice(technicalSnapshot?.ema9)}</strong><small>{Number.isFinite(entryPrice) && technicalSnapshot ? entryPrice >= technicalSnapshot.ema9 ? "Harga di atas EMA" : "Harga di bawah EMA" : "Menunggu data"}</small></div>
+            </div>
+            <div className="scalp-levels">
+              <span>Support 20 bar <b>{formatPrice(technicalSnapshot?.support)}</b></span>
+              <span>Resistance 20 bar <b>{formatPrice(technicalSnapshot?.resistance)}</b></span>
+            </div>
+            <p className="scalp-note">{candles.length ? `${candles.length} candle · ${period} · level dan indikator dihitung dari data chart.` : "Menunggu data chart untuk menghitung indikator."}</p>
+
+            <div className="risk-heading"><strong>Kalkulator posisi</strong><small>Ukuran lot dibulatkan ke bawah (1 lot = 100 saham)</small></div>
+            <div className="risk-input-grid">
+              <label>Modal (Rp)<input type="number" min="0" step="100000" value={capital} onChange={(event) => setCapital(event.target.value)} /></label>
+              <label>Risiko maks. (%)<input type="number" min="0" max="100" step="0.1" value={riskPercent} onChange={(event) => setRiskPercent(event.target.value)} /></label>
+              <label>Jarak stop (%)<input type="number" min="0.1" step="0.1" value={stopPercent} onChange={(event) => setStopPercent(event.target.value)} /></label>
+              <label>Target R:R<input type="number" min="0.1" step="0.1" value={rewardRisk} onChange={(event) => setRewardRisk(event.target.value)} /></label>
+            </div>
+            <div className="risk-result-grid">
+              <span>Risiko anggaran <b>{formatPrice(riskAmount)}</b></span>
+              <span>Ukuran posisi <b>{lotSize.toLocaleString("id-ID")} lot</b></span>
+              <span>Stop simulasi <b>{formatPrice(Number(entryPrice) - stopDistance)}</b></span>
+              <span>Target simulasi <b>{formatPrice(targetPrice)}</b></span>
+            </div>
+            <button className="paper-plan-button" type="button" onClick={recordPaperPlan} disabled={lotSize <= 0 || !Number.isFinite(entryPrice) || !Number.isFinite(targetPrice)}>Catat rencana simulasi</button>
+            <p className="scalp-disclaimer">Perkiraan edukasi, belum termasuk fee, slippage, fraksi harga, likuiditas, dan risiko gap. Bukan instruksi transaksi.</p>
+
+            <div className="paper-journal-heading"><strong>Jurnal simulasi</strong><span>{paperJournal.length} catatan</span></div>
+            {paperJournal.length ? <div className="paper-journal-list">{paperJournal.slice(0, 4).map((item) => <div className="paper-journal-row" key={item.id}><span><b>{item.ticker}</b><small>{new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }).format(item.time)} · {item.lots} lot</small></span><span>Entry {formatPrice(item.entry)}<small>SL {formatPrice(item.stop)} · TP {formatPrice(item.target)}</small></span></div>)}</div> : <p className="journal-empty">Rencana yang dicatat akan muncul di sini selama sesi ini.</p>}
           </section>
 
           <section className="terminal-ai">
