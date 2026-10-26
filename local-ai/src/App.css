@@ -117,6 +117,11 @@ button { font: inherit; }
 .candle-svg.drawing-active { cursor: crosshair; }
 .candle-svg:not(.drawing-active) { cursor: grab; touch-action: none; user-select: none; }
 .candle-svg.chart-dragging { cursor: grabbing; }
+.chart-crosshair { stroke: #c9d6dd; stroke-width: 1; stroke-dasharray: 4 4; opacity: .72; pointer-events: none; vector-effect: non-scaling-stroke; }
+.chart-crosshair-point { fill: #dbe6e9; stroke: #1a2227; stroke-width: 2; pointer-events: none; vector-effect: non-scaling-stroke; }
+.crosshair-price-tag { fill: #35454d; stroke: #aebcc4; stroke-width: .7; pointer-events: none; }
+.crosshair-date-tag { fill: #29363d; stroke: #87969e; stroke-width: .7; pointer-events: none; }
+.crosshair-tag-label { fill: #f1f5f6; font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; }
 .chart-drawing { fill: none; stroke: #f2bb4b; stroke-width: 2; stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .trend-drawing { stroke: #8ab9f5; stroke-dasharray: none; }
 .drawing-label { fill: #f2bb4b; font-size: 9px; font-family: "DM Sans",sans-serif; }

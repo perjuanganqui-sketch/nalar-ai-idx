@@ -181,6 +181,7 @@ function CandleChart({ candles, period, visibleCount, offset, showAverages, show
   const dragRef = useRef(null);
   const draggedRef = useRef(false);
   const [dragging, setDragging] = useState(false);
+  const [hoverPoint, setHoverPoint] = useState(null);
   const endIndex = Math.max(0, candles.length - offset);
   const startIndex = Math.max(0, endIndex - visibleCount);
   const visible = candles.slice(startIndex, endIndex);
@@ -206,6 +207,22 @@ function CandleChart({ candles, period, visibleCount, offset, showAverages, show
   }
 
   function movePan(event) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const pointerX = ((event.clientX - bounds.left) / bounds.width) * chartWidth;
+    const pointerY = ((event.clientY - bounds.top) / bounds.height) * (showRsi ? 575 : 540);
+
+    if (
+      pointerX >= left && pointerX <= chartWidth - right
+      && pointerY >= plotTop && pointerY <= plotBottom
+    ) {
+      const index = Math.max(0, Math.min(visible.length - 1, Math.floor(((pointerX - left) / plotWidth) * visible.length)));
+      const candle = visible[index];
+      const value = chartMax - ((pointerY - plotTop) / (plotBottom - plotTop)) * range;
+      setHoverPoint({ x: pointerX, y: pointerY, value, time: candle.time });
+    } else {
+      setHoverPoint(null);
+    }
+
     if (!dragRef.current) return;
     const delta = event.clientX - dragRef.current.startX;
     if (Math.abs(delta) > 4) {
@@ -278,6 +295,7 @@ function CandleChart({ candles, period, visibleCount, offset, showAverages, show
       onPointerMove={movePan}
       onPointerUp={endPan}
       onPointerCancel={endPan}
+      onPointerLeave={() => setHoverPoint(null)}
       onClick={(event) => {
         if (draggedRef.current) {
           draggedRef.current = false;
@@ -305,6 +323,15 @@ function CandleChart({ candles, period, visibleCount, offset, showAverages, show
           {showVolume && <rect x={x - candleWidth / 2} y={volumeBottom - volumeHeight} width={candleWidth} height={Math.max(volumeHeight, 1)} fill={color} opacity=".65" />}
         </g>;
       })}
+      {hoverPoint && <>
+        <line x1={hoverPoint.x} x2={hoverPoint.x} y1={plotTop} y2={plotBottom} className="chart-crosshair" />
+        <line x1={left} x2={chartWidth - right} y1={hoverPoint.y} y2={hoverPoint.y} className="chart-crosshair" />
+        <circle cx={hoverPoint.x} cy={hoverPoint.y} r="3" className="chart-crosshair-point" />
+        <rect x={chartWidth - right + 3} y={hoverPoint.y - 10} width={right - 8} height="20" rx="3" className="crosshair-price-tag" />
+        <text x={chartWidth - right + 8} y={hoverPoint.y + 3} className="crosshair-tag-label">{formatPrice(hoverPoint.value)}</text>
+        <rect x={Math.max(left, Math.min(chartWidth - right - 65, hoverPoint.x - 32))} y={showRsi ? 554 : 518} width="65" height="19" rx="3" className="crosshair-date-tag" />
+        <text x={Math.max(left, Math.min(chartWidth - right - 65, hoverPoint.x - 32)) + 32.5} y={showRsi ? 567 : 531} textAnchor="middle" className="crosshair-tag-label">{formatChartDate(hoverPoint.time, period)}</text>
+      </>}
       {ma20 && <path d={ma20} className="ma-line ma-20" />}
       {ma50 && <path d={ma50} className="ma-line ma-50" />}
       <line x1={left} x2={chartWidth - right} y1={yFor(visible.at(-1).close)} y2={yFor(visible.at(-1).close)} className="price-guide" />
