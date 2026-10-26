@@ -618,3 +618,52 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
     transition-duration: .01ms !important;
   }
 }
+
+.trading-terminal {
+  font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: .005em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+}
+
+.active-symbol > strong,.watchlist-title h1,.chart-tabs > button.active,
+.scalp-heading strong,.risk-heading strong,.paper-journal-heading strong {
+  font-weight: 550;
+}
+
+.watch-name strong,.watch-quote strong,.chart-instrument-title > strong,
+.quote-card-title > strong,.scalp-snapshot strong,.paper-journal-row b {
+  font-weight: 550;
+}
+
+.active-symbol > span:not(.symbol-logo),
+.connection-indicator,.selected-company,.watch-name small,
+.watchlist-columns,.watchlist-foot,.quote-grid > span,
+.market-source-line,.scalp-note,.risk-input-grid label,
+.ai-panel-heading small,.ai-welcome span,.composer-footer > span,
+.quote-time,.drawing-status,.chart-bottom,.axis-label,.indicator-label {
+  color: #a0aab4;
+}
+
+.watch-name small,.watch-quote small,.quote-grid > span,
+.market-source-line,.scalp-note,.scalp-disclaimer,
+.paper-journal-row small,.ai-welcome span,.composer-footer > span {
+  font-weight: 400;
+}
+
+.chart-instrument-title > span:not(.symbol-logo),
+.chart-ohlc > span,.legend-row,.scalp-snapshot span,
+.scalp-levels > span,.risk-result-grid > span,.paper-journal-row {
+  color: #adb7c0;
+}
+
+.axis-label,.indicator-label {
+  fill: #a0aab4;
+  font-weight: 400;
+}
+
+.terminal-ai,.scalping-panel,.quote-card,.watchlist-panel {
+  -webkit-font-smoothing: antialiased;
+}

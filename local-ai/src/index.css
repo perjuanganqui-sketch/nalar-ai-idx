@@ -1,15 +1,16 @@
 :root {
-  font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
   color: #e9eaf2;
   background: #0e1016;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  font-kerning: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-optical-sizing: auto;
   font-weight: 400;
   font-size: 14px;
-  font-feature-settings: "ss01" on;
+  font-feature-settings: "ss01" on, "kern" on;
 }
 
 * { box-sizing: border-box; }
