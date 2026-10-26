@@ -112,7 +112,7 @@ const marketCache = new Map();
 const marketRequests = new Map();
 const signalCache = new Map();
 const signalRequests = new Map();
-const marketCacheTtl = 20_000;
+const marketCacheTtl = 10_000;
 const signalCacheTtl = 30_000;
 let latestMarketData;
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const periods = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "All"];
+const marketPollInterval = 10_000;
 const emptyArray = [];
 const popularQuestions = [
   "Ringkas kondisi saham ini",
@@ -44,6 +45,14 @@ function formatTime(timestamp) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(timestamp);
+}
+
+function formatQuoteAge(timestamp) {
+  if (!Number.isFinite(timestamp)) return "waktu data tidak tersedia";
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (ageSeconds < 60) return "kuotasi baru saja";
+  if (ageSeconds < 3600) return `data ${Math.floor(ageSeconds / 60)} menit tertinggal`;
+  return `data ${Math.floor(ageSeconds / 3600)} jam tertinggal`;
 }
 
 function formatDate(timestamp) {
@@ -369,7 +378,7 @@ export default function App() {
       }
     }
     refreshMarket();
-    const timer = window.setInterval(refreshMarket, 30_000);
+    const timer = window.setInterval(refreshMarket, marketPollInterval);
     return () => { active = false; window.clearInterval(timer); };
   }, [period, refreshVersion]);
 
@@ -399,7 +408,7 @@ export default function App() {
       }
     }
     refreshStock();
-    const timer = window.setInterval(refreshStock, 30_000);
+    const timer = window.setInterval(refreshStock, marketPollInterval);
     return () => { active = false; window.clearInterval(timer); };
   }, [selectedTicker, period, refreshVersion]);
 
@@ -559,7 +568,7 @@ export default function App() {
             {candles.length ? <CandleChart candles={candles} period={period} showAverages={showAverages} showVolume={showVolume} showRsi={showRsi} drawings={currentDrawings} activeTool={activeTool} pendingPoint={pendingPoint?.ticker === selectedTicker ? pendingPoint : null} aiSignal={selectedAiSignal} onChartClick={handleChartClick} /> : <div className="chart-placeholder">{visibleStockError || "Mengambil chart saham..."}</div>}
           </div>
           <div className="drawing-status" aria-live="polite">{activeTool === "trend" ? pendingPoint?.ticker === selectedTicker ? "Pilih titik akhir trendline" : "Pilih titik awal trendline" : activeTool === "horizontal" ? "Klik chart untuk menambahkan garis harga" : `${currentDrawings.length} anotasi chart · Mode pilih`}</div>
-          <div className="chart-bottom"><span>Zona waktu: WIB · Data mungkin tertunda</span><span>{selectedStockData ? `Terakhir diperbarui ${formatTime(selectedStockData.quoteTime)} WIB` : "Menunggu data"}</span></div>
+          <div className="chart-bottom"><span>Data Yahoo Finance dapat tertunda · bukan feed real-time resmi</span><span>{selectedStockData ? `${formatQuoteAge(selectedStockData.quoteTime)} · dicek tiap 10 dtk` : "Menunggu data"}</span></div>
         </section>
 
         <aside className="market-sidepanel">
@@ -571,7 +580,7 @@ export default function App() {
               <span>High <b className="positive">{formatPrice(selectedStockData?.dayHigh ?? selectedQuote?.dayHigh)}</b></span><span>Volume <b>{formatVolume(selectedStockData?.volume ?? selectedQuote?.volume)}</b></span>
               <span>Low <b className="negative">{formatPrice(selectedStockData?.dayLow ?? selectedQuote?.dayLow)}</b></span><span>Avg <b>—</b></span>
             </div>
-            <div className="market-source-line"><i /> Data publik · Yahoo Finance · {formatTime(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} WIB</div>
+            <div className="market-source-line"><i /> Yahoo Finance · {formatQuoteAge(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} · {formatTime(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} WIB</div>
           </section>
 
           <section className="terminal-ai">

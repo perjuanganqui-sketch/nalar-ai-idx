@@ -23,7 +23,7 @@ Untuk alternatif Render, `render.yaml` tetap tersedia. Layanan gratis dapat tidu
 
 ## Sumber dan keterlambatan data
 
-- Aplikasi mengambil IHSG (`^JKSE`) dan kuotasi watchlist pilihan dari endpoint grafik Yahoo Finance, lalu memeriksa pembaruan setiap 30 detik. Cari ticker atau nama emiten lain untuk menemukan dan menambahkannya ke watchlist; grafik dan kuotasi emiten tersebut dimuat saat dipilih agar tidak meminta data semua saham sekaligus. Interval polling bukan jaminan penyedia menerbitkan harga baru setiap 30 detik.
+- Aplikasi mengambil IHSG (`^JKSE`) dan kuotasi watchlist pilihan dari endpoint grafik Yahoo Finance, lalu memeriksa pembaruan setiap 10 detik saat halaman aktif. Cache backend berlaku 10 detik. Cari ticker atau nama emiten lain untuk menemukan dan menambahkannya ke watchlist; grafik dan kuotasi emiten tersebut dimuat saat dipilih agar tidak meminta data semua saham sekaligus. Interval polling bukan jaminan penyedia menerbitkan harga baru setiap 10 detik: Yahoo Finance dapat menampilkan data tertunda dan bukan feed real-time resmi BEI. Tampilan kuotasi menunjukkan umur timestamp yang diterima dari penyedia.
 - Gunakan tombol `−`/`+` untuk menghapus atau menambahkan ticker terpilih ke watchlist, tombol bintang untuk mengatur favorit, dan filter watchlist untuk menampilkan favorit. Perubahan ini berlaku selama halaman terbuka.
 - Tombol perbarui mengambil data lagi tanpa memuat ulang halaman.
 - Logo lokal ditampilkan untuk ticker yang memiliki aset logo; ticker lainnya memakai monogram berwarna yang dibuat dari kode saham.
