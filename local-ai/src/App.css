@@ -54,6 +54,21 @@ button { font: inherit; }
 .watch-quote { min-width: 53px; display: grid; justify-items: end; gap: 3px; margin-left: auto; white-space: nowrap; }
 .watch-quote strong { color: #e4e6eb; font-size: 10px; font-variant-numeric: tabular-nums; }
 .watch-quote small { font-size: 8px; font-variant-numeric: tabular-nums; }
+.price-flash-up,.watch-quote strong.price-flash-up { animation: price-flash-up 1.2s ease-out; }
+.price-flash-down,.watch-quote strong.price-flash-down { animation: price-flash-down 1.2s ease-out; }
+@keyframes price-flash-up {
+  0%,100% { color: #e4e6eb; background: transparent; }
+  12%,36%,60% { color: #75ffc7; background: #087b534d; box-shadow: 0 0 12px #16d99470; }
+  24%,48%,72% { color: #e4e6eb; background: transparent; box-shadow: none; }
+}
+@keyframes price-flash-down {
+  0%,100% { color: #e4e6eb; background: transparent; }
+  12%,36%,60% { color: #ff9a9f; background: #9b2d394d; box-shadow: 0 0 12px #ff4f6070; }
+  24%,48%,72% { color: #e4e6eb; background: transparent; box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .price-flash-up,.price-flash-down,.watch-quote strong.price-flash-up,.watch-quote strong.price-flash-down { animation-duration: .01ms; }
+}
 .positive { color: #05bb80 !important; }.negative { color: #f05260 !important; }
 .watch-spark { width: 48px; height: 20px; flex: 0 0 48px; }
 .watch-spark path { fill: none; stroke: currentColor; stroke-width: 1.5; }
@@ -127,6 +142,7 @@ button { font: inherit; }
 .quote-card-spacer { flex: 1; }
 .quote-big-price { margin: 6px 0 8px; color: #f0f1f4; font: 600 19px/1.1 "DM Sans",sans-serif; font-variant-numeric: tabular-nums; }
 .quote-big-price span { margin-left: 5px; font-size: 10px; }
+.quote-big-price > span:first-child { margin-left: 0; font-size: inherit; }
 .quote-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; }
 .quote-grid > span { display: flex; justify-content: space-between; gap: 7px; color: #9096a1; font-size: 8px; }
 .quote-grid b { overflow: hidden; color: #c9cdd5; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }

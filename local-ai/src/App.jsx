@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const periods = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "All"];
@@ -258,6 +258,7 @@ export default function App() {
   const [favoriteTickers, setFavoriteTickers] = useState([]);
   const [removedTickers, setRemovedTickers] = useState([]);
   const [addedTickers, setAddedTickers] = useState([]);
+  const [priceMoves, setPriceMoves] = useState({});
   const [showFavorites, setShowFavorites] = useState(false);
   const [activeNavigation, setActiveNavigation] = useState("Watchlist");
   const [showAverages, setShowAverages] = useState(true);
@@ -269,6 +270,8 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
+  const previousPrices = useRef(new Map());
+  const priceFlashTimers = useRef(new Map());
   const quotes = useMemo(() => {
     const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
     if (stockData) stockQuotes.set(stockData.ticker, stockData);
@@ -306,6 +309,45 @@ export default function App() {
   const isFavorite = favoriteTickers.includes(selectedTicker);
   const isInWatchlist = !removedTickers.includes(selectedTicker);
   const watchlistCount = quotes.filter((quote) => !removedTickers.includes(quote.ticker)).length;
+  const priceMoveClass = (ticker) => {
+    const direction = priceMoves[ticker];
+    return direction ? `price-flash-${direction}` : "";
+  };
+
+  useEffect(() => {
+    const trackedQuotes = new Map(quotes.map((quote) => [quote.ticker, quote]));
+    if (stockData) trackedQuotes.set(stockData.ticker, stockData);
+
+    for (const quote of trackedQuotes.values()) {
+      if (!Number.isFinite(quote.price)) continue;
+
+      const previous = previousPrices.current.get(quote.ticker);
+      if (previous && Number.isFinite(quote.quoteTime) && Number.isFinite(previous.quoteTime) && quote.quoteTime < previous.quoteTime) {
+        continue;
+      }
+
+      previousPrices.current.set(quote.ticker, { price: quote.price, quoteTime: quote.quoteTime });
+      if (!previous || quote.price === previous.price) continue;
+
+      const direction = quote.price > previous.price ? "up" : "down";
+      setPriceMoves((current) => ({ ...current, [quote.ticker]: direction }));
+      const existingTimer = priceFlashTimers.current.get(quote.ticker);
+      if (existingTimer) window.clearTimeout(existingTimer);
+      const timer = window.setTimeout(() => {
+        setPriceMoves((current) => {
+          const next = { ...current };
+          delete next[quote.ticker];
+          return next;
+        });
+        priceFlashTimers.current.delete(quote.ticker);
+      }, 1_200);
+      priceFlashTimers.current.set(quote.ticker, timer);
+    }
+  }, [quotes, stockData]);
+
+  useEffect(() => () => {
+    for (const timer of priceFlashTimers.current.values()) window.clearTimeout(timer);
+  }, []);
 
   function refreshData() {
     setRefreshVersion((version) => version + 1);
@@ -473,7 +515,7 @@ export default function App() {
     <main className="trading-terminal">
       <header className="terminal-topbar">
         <a className="terminal-logo" href="#" aria-label="Nalar analisis"><span><Icon name="chart" size={17} /></span></a>
-        <div className="active-symbol"><SymbolLogo key={selectedTicker} ticker={selectedTicker} color={selectedQuote?.color ?? "#168bcc"} /><strong>{selectedTicker}</strong><span>{selectedQuote?.name ?? "Memuat saham..."}</span><b className="leverage-tag">IDX</b><span className={`quote-change ${selectedQuote?.changePercent >= 0 ? "positive" : "negative"}`}>{selectedQuote ? `${formatPrice(selectedQuote.price)}  ${formatChange(selectedQuote.changePercent)}` : ""}</span></div>
+        <div className="active-symbol"><SymbolLogo key={selectedTicker} ticker={selectedTicker} color={selectedQuote?.color ?? "#168bcc"} /><strong>{selectedTicker}</strong><span>{selectedQuote?.name ?? "Memuat saham..."}</span><b className="leverage-tag">IDX</b><span className={`quote-change ${selectedQuote?.changePercent >= 0 ? "positive" : "negative"} ${priceMoveClass(selectedTicker)}`}>{selectedQuote ? `${formatPrice(selectedQuote.price)}  ${formatChange(selectedQuote.changePercent)}` : ""}</span></div>
         <div className="topbar-actions">
           <span className="connection-indicator"><i /> {refreshing ? "Memperbarui" : "Data pasar"}</span>
           <button className="top-icon-button" title="Perbarui data" aria-label="Perbarui data" onClick={refreshData}><Icon name="refresh" size={15} /></button>
@@ -502,7 +544,7 @@ export default function App() {
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
-              <span className="watch-quote"><strong>{formatPrice(quote.price)}</strong><small className={Number.isFinite(quote.changePercent) ? quote.changePercent >= 0 ? "positive" : "negative" : ""}>{Number.isFinite(quote.changePercent) ? `${quote.change >= 0 ? "↗" : "↘"} ${formatChange(quote.changePercent)}` : quote.sector}</small></span>
+              <span className="watch-quote"><strong className={priceMoveClass(quote.ticker)}>{formatPrice(quote.price)}</strong><small className={Number.isFinite(quote.changePercent) ? quote.changePercent >= 0 ? "positive" : "negative" : ""}>{Number.isFinite(quote.changePercent) ? `${quote.change >= 0 ? "↗" : "↘"} ${formatChange(quote.changePercent)}` : quote.sector}</small></span>
             </button>)}
             {searchResults.length > 0 && <div className="watchlist-search-heading">EMITEN LAINNYA · KLIK UNTUK MENAMBAHKAN</div>}
             {searchResults.map((instrument) => <button key={instrument.ticker} className="watch-row watch-row-search-result" onClick={() => {
@@ -558,7 +600,7 @@ export default function App() {
               <span>O <b>{formatPrice(selectedStockData?.open ?? latestCandle?.open)}</b></span>
               <span>H <b className="positive">{formatPrice(selectedStockData?.dayHigh ?? latestCandle?.high)}</b></span>
               <span>L <b className="negative">{formatPrice(selectedStockData?.dayLow ?? latestCandle?.low)}</b></span>
-              <span>C <b>{formatPrice(selectedStockData?.price ?? latestCandle?.close)}</b></span>
+              <span>C <b className={priceMoveClass(selectedTicker)}>{formatPrice(selectedStockData?.price ?? latestCandle?.close)}</b></span>
               <span className={selectedStockData?.changePercent >= 0 ? "positive" : "negative"}>{formatChange(selectedStockData?.changePercent)}</span>
             </div>
           </div>
@@ -574,7 +616,7 @@ export default function App() {
         <aside className="market-sidepanel">
           <section className="quote-card">
             <div className="quote-card-title"><SymbolLogo key={selectedTicker} ticker={selectedTicker} color={selectedQuote?.color ?? "#168bcc"} /><strong>{selectedTicker}</strong><b className="instrument-pill">IDX</b><span className="quote-card-spacer" /><button title={isFavorite ? "Hapus dari favorit" : "Tambahkan ke favorit"} aria-label={isFavorite ? "Hapus dari favorit" : "Tambahkan ke favorit"} aria-pressed={isFavorite} onClick={() => toggleFavorite(selectedTicker)}>{isFavorite ? "★" : "☆"}</button></div>
-            <div className="quote-big-price">{formatPrice(selectedStockData?.price ?? selectedQuote?.price)} <span className={selectedStockData?.changePercent >= 0 ? "positive" : "negative"}>{selectedStockData ? formatChange(selectedStockData.changePercent) : formatChange(selectedQuote?.changePercent)}</span></div>
+            <div className="quote-big-price"><span className={priceMoveClass(selectedTicker)}>{formatPrice(selectedStockData?.price ?? selectedQuote?.price)}</span><span className={selectedStockData?.changePercent >= 0 ? "positive" : "negative"}>{selectedStockData ? formatChange(selectedStockData.changePercent) : formatChange(selectedQuote?.changePercent)}</span></div>
             <div className="quote-grid">
               <span>Open <b>{formatPrice(selectedStockData?.open ?? selectedQuote?.open)}</b></span><span>Prev <b>{formatPrice(selectedStockData?.previousClose ?? selectedQuote?.previousClose)}</b></span>
               <span>High <b className="positive">{formatPrice(selectedStockData?.dayHigh ?? selectedQuote?.dayHigh)}</b></span><span>Volume <b>{formatVolume(selectedStockData?.volume ?? selectedQuote?.volume)}</b></span>
