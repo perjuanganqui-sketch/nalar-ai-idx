@@ -15,11 +15,11 @@ Buka `http://nalar.localhost:3001` (atau `http://localhost:3001`). Server menyaj
 
 Di Windows, `start-nalar.vbs` dapat dipasang ke folder Startup agar frontend dan backend berjalan otomatis saat login. Log server disimpan di `%LOCALAPPDATA%\Nalar\server.log`.
 
-## Deploy online di Render
+## Deploy online di Vercel
 
-File `render.yaml` menyiapkan layanan web Render dengan paket gratis. Unggah proyek ke repository GitHub pribadi, lalu di Render pilih **New > Blueprint** dan hubungkan repository tersebut. Saat diminta, isi `GEMINI_API_KEY` sebagai environment variable rahasia. Jangan menaruh API key di repository. Setelah deploy berhasil, buka URL `onrender.com` yang diberikan Render.
+Repository ini memakai `vercel.json` untuk menggabungkan frontend Vite dan backend Express dalam satu domain: request `/api/*` menuju backend, sedangkan halaman lainnya menuju frontend. Hubungkan repository GitHub ke Vercel dan deploy sebagai project multi-service. Tambahkan `GEMINI_API_KEY` sebagai environment variable rahasia pada pengaturan project Vercel; jangan simpan API key di repository. Vercel Hobby ditujukan untuk penggunaan personal/non-komersial. Jika project digunakan secara komersial, pilih paket yang sesuai dengan ketentuan Vercel.
 
-Layanan gratis dapat tidur saat tidak digunakan dan perlu waktu untuk aktif kembali. Penggunaan Gemini tetap mengikuti kuota project Google yang terkait dengan API key.
+Untuk alternatif Render, `render.yaml` tetap tersedia. Layanan gratis dapat tidur saat tidak digunakan, dan Render mungkin meminta metode pembayaran untuk verifikasi akun. Penggunaan Gemini tetap mengikuti kuota project Google yang terkait dengan API key.
 
 ## Sumber dan keterlambatan data
 

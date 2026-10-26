@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "nalar-ai": {
+      "root": ".",
+      "framework": "express",
+      "buildCommand": "npm install && npm run build"
+    },
+    "local-ai": {
+      "root": "local-ai",
+      "framework": "vite"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "nalar-ai"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "local-ai"
+      }
+    }
+  ]
+}
