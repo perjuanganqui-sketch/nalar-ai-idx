@@ -142,6 +142,35 @@ button { font: inherit; }
 .chart-bottom { min-height: 22px; display: flex; justify-content: space-between; padding: 4px 10px; border-top: 1px solid #303238; color: #7d838e; font-size: 8px; }
 .inline-error { padding: 5px 10px; border-bottom: 1px solid #75474b; color: #f1a0a5; background: #372427; font-size: 9px; }
 .market-sidepanel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; background: #202226; scrollbar-color: #454950 transparent; scrollbar-width: thin; }
+.investor-signal-panel { padding: 10px; border-bottom: 1px solid #34373d; }
+.investor-signal-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.investor-signal-heading > div { display: grid; gap: 2px; }
+.investor-signal-heading strong { color: #e1e4ea; font-size: 11px; }
+.investor-signal-heading small { color: #828995; font-size: 8px; }
+.investor-signal-heading > span { padding: 3px 5px; border: 1px solid #3c4148; border-radius: 4px; color: #a3abb7; font-size: 7px; font-weight: 700; letter-spacing: .25px; }
+.investor-horizons { display: grid; gap: 5px; margin-top: 9px; }
+.investor-horizon { display: grid; grid-template-columns: minmax(0,1fr) 42px; align-items: center; gap: 6px; padding: 7px; border: 1px solid #34373d; border-radius: 5px; background: #1b1d21; }
+.investor-horizon > span { color: #aeb4be; font-size: 8px; }
+.investor-horizon > strong { color: #e3bd65; font-size: 9px; text-align: center; }
+.investor-horizon > strong small { display: block; margin-top: 2px; color: #828995; font-size: 6px; font-weight: 400; }
+.investor-horizon.signal-buy > strong { color: #00d28b; }
+.investor-horizon.signal-sell > strong { color: #ff6671; }
+.investor-horizon > small { grid-column: 1 / -1; display: -webkit-box; overflow: hidden; color: #838b96; font-size: 7px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.investor-status-grid { display: grid; gap: 5px; margin-top: 7px; }
+.investor-status-grid > div { min-width: 0; display: grid; gap: 4px; padding: 7px; border: 1px solid #34373d; border-radius: 5px; background: #202328; }
+.investor-status-grid > div > span { color: #9198a3; font-size: 8px; }
+.investor-status-grid > div > strong { color: #d7dce4; font-size: 9px; }
+.investor-status-grid > div > small { color: #818995; font-size: 7px; line-height: 1.45; }
+.news-tone-positive { color: #62d9ad !important; }
+.news-tone-negative { color: #ef858d !important; }
+.news-tone-mixed,.news-tone-neutral { color: #d6b879 !important; }
+.investor-news-evidence { display: grid; gap: 5px; margin-top: 7px; }
+.investor-news-evidence > a { display: grid; grid-template-columns: 12px minmax(0,1fr); gap: 4px; color: #aeb5bf; font-size: 7px; line-height: 1.45; text-decoration: none; }
+.investor-news-evidence > a:hover { color: #83dfbd; }
+.investor-news-evidence > a > span { font-weight: 700; }
+.investor-signal-state,.investor-signal-disclaimer { margin: 8px 0 0; color: #858d98; font-size: 8px; line-height: 1.5; }
+.investor-signal-error { color: #ef9b9f; }
+.investor-signal-disclaimer { color: #8a784e; font-size: 7px; }
 .news-panel { padding: 10px; border-bottom: 1px solid #34373d; }
 .news-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .news-heading > div { min-width: 0; display: grid; gap: 2px; }
@@ -301,6 +330,14 @@ button { font: inherit; }
 .technical-signal-banner.signal-sell > strong { color: #ff6671; }
 .technical-signal-banner.signal-wait { border-left: 3px solid #d4a94f; }
 .technical-signal-banner.signal-wait > strong { color: #e3bd65; }
+.investor-signal-strip { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; padding: 6px 10px; border-bottom: 1px solid #303238; background: #171a1e; }
+.investor-strip-item { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 5px 7px; border: 1px solid #34373d; border-radius: 4px; background: #202328; }
+.investor-strip-item > span { overflow: hidden; color: #9ba3ae; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.investor-strip-item > strong { flex: 0 0 auto; color: #e3bd65; font-size: 9px; }
+.investor-strip-item.signal-buy > strong { color: #00d28b; }
+.investor-strip-item.signal-sell > strong { color: #ff6671; }
+.investor-strip-loading { display: block; color: #9ca4af; font-size: 8px; line-height: 1.45; }
+.investor-mobile-context { display: none; }
 @media (max-width: 1200px) { .terminal-layout { grid-template-columns: 43px 230px minmax(360px,1fr) 290px; }.watch-spark { width: 36px; flex-basis: 36px; }.watch-row { gap: 5px; padding-right: 6px; padding-left: 6px; }.chart-ohlc { gap: 5px; }.chart-ohlc > span { font-size: 7px; }.chart-toolbar { gap: 4px; }.toolbar-action { padding-right: 4px; padding-left: 4px; } }
 @media (max-width: 950px) { .terminal-layout { grid-template-columns: 42px 205px minmax(320px,1fr); }.market-sidepanel { display: none; }.active-symbol > span:not(.symbol-logo) { max-width: 140px; }.connection-indicator { display: none; } }
 @media (max-width: 680px) {
@@ -619,6 +656,10 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 
 @media (max-width: 950px) {
   .terminal-layout { grid-template-columns: 44px 220px minmax(320px,1fr); }
+  .investor-mobile-context { display: grid; gap: 4px; padding: 6px 10px; border-bottom: 1px solid #303238; color: #8f98a3; background: #1a1d21; font-size: 7px; line-height: 1.5; }
+  .investor-mobile-context > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .investor-mobile-context a { color: #aeb8c3; text-decoration: none; }
+  .investor-mobile-context a:hover { color: #83dfbd; }
 }
 
 @media (max-width: 680px) {

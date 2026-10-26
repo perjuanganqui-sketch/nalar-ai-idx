@@ -474,6 +474,10 @@ export default function App() {
   const [localSignalError, setLocalSignalError] = useState("");
   const [localSignalErrorTicker, setLocalSignalErrorTicker] = useState("");
   const [localSignalLoadingTicker, setLocalSignalLoadingTicker] = useState("");
+  const [investorSignalData, setInvestorSignalData] = useState(null);
+  const [investorSignalError, setInvestorSignalError] = useState("");
+  const [investorSignalErrorTicker, setInvestorSignalErrorTicker] = useState("");
+  const [investorSignalLoadingTicker, setInvestorSignalLoadingTicker] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [favoriteTickers, setFavoriteTickers] = useState([]);
@@ -502,6 +506,7 @@ export default function App() {
   const previousPrices = useRef(new Map());
   const priceFlashTimers = useRef(new Map());
   const signalRequestId = useRef(0);
+  const investorSignalRequestId = useRef(0);
   const newsRequestId = useRef(0);
   const quotes = useMemo(() => {
     const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
@@ -535,7 +540,9 @@ export default function App() {
   const selectedQuote = quotes.find((quote) => quote.ticker === selectedTicker) ?? selectedStockData;
   const candles = selectedStockData?.range === period ? selectedStockData.chart : emptyArray;
   const selectedLocalSignal = localSignal?.ticker === selectedTicker ? localSignal : null;
+  const selectedInvestorSignals = investorSignalData?.ticker === selectedTicker ? investorSignalData : null;
   const visibleLocalSignalError = localSignalErrorTicker === selectedTicker ? localSignalError : "";
+  const visibleInvestorSignalError = investorSignalErrorTicker === selectedTicker ? investorSignalError : "";
   const visibleStockError = stockErrorTicker === selectedTicker ? stockError : "";
   const latestCandle = candles.at(-1);
   const technicalSnapshot = useMemo(() => getTechnicalSnapshot(candles), [candles]);
@@ -705,6 +712,34 @@ export default function App() {
     }
   }
 
+  async function requestInvestorSignals(ticker) {
+    const requestId = investorSignalRequestId.current + 1;
+    investorSignalRequestId.current = requestId;
+    setInvestorSignalLoadingTicker(ticker);
+    setInvestorSignalError("");
+    setInvestorSignalErrorTicker("");
+    try {
+      const response = await fetch(`/api/market/investor-signals/${ticker}`, { cache: "no-store" });
+      const data = await readApiResponse(response);
+      if (!response.ok) throw new Error(data.error || `Sinyal investor gagal dimuat (HTTP ${response.status}).`);
+      if (data.ticker !== ticker || !Array.isArray(data.horizons)) {
+        throw new Error("Format analisis investor yang diterima tidak valid.");
+      }
+      if (requestId === investorSignalRequestId.current) {
+        setInvestorSignalData(data);
+        setInvestorSignalError("");
+        setInvestorSignalErrorTicker("");
+      }
+    } catch (error) {
+      if (requestId === investorSignalRequestId.current) {
+        setInvestorSignalError(error.message || "Sinyal investor belum tersedia. Coba lagi nanti.");
+        setInvestorSignalErrorTicker(ticker);
+      }
+    } finally {
+      if (requestId === investorSignalRequestId.current) setInvestorSignalLoadingTicker("");
+    }
+  }
+
   function recordPaperPlan() {
     if (!Number.isFinite(entryPrice) || lotSize <= 0 || !Number.isFinite(targetPrice)) return;
     setPaperJournal((current) => [{
@@ -864,7 +899,7 @@ export default function App() {
           <label className="watchlist-search"><Icon name="search" size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari ticker..." /></label>
           <div className="watchlist-columns"><span>INSTRUMEN</span><span>HARGA / PERUBAHAN</span></div>
           <div className="watchlist-scroll">
-            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan hitung sinyal teknikal lokal`} onClick={() => { selectStock(quote.ticker); requestTechnicalSignal(quote.ticker); }}>
+            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan hitung analisis teknikal serta investor`} onClick={() => { selectStock(quote.ticker); requestTechnicalSignal(quote.ticker); requestInvestorSignals(quote.ticker); }}>
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
@@ -876,6 +911,7 @@ export default function App() {
               setRemovedTickers((current) => current.filter((ticker) => ticker !== instrument.ticker));
               selectStock(instrument.ticker);
               requestTechnicalSignal(instrument.ticker);
+              requestInvestorSignals(instrument.ticker);
               setQuery("");
             }}>
               <SymbolLogo ticker={instrument.ticker} color={instrument.color} />
@@ -923,6 +959,17 @@ export default function App() {
             <span>{selectedLocalSignal ? selectedLocalSignal.rationale : localSignalLoadingTicker === selectedTicker ? `Menghitung indikator teknikal ${selectedTicker} di perangkat ini.` : visibleLocalSignalError || `Klik emiten untuk menghitung sinyal teknikal ${selectedTicker}.`}</span>
             <small>{selectedLocalSignal ? `5 indikator teknikal · ${selectedLocalSignal.provider} · data ${formatTime(selectedLocalSignal.quoteTime)} WIB · bukan rekomendasi personal` : "Berbasis aturan indikator lokal, bukan AI; data pasar dapat tertunda."}</small>
           </div>
+          {selectedInvestorSignals && <div className="investor-signal-strip" aria-label="Ringkasan sinyal investor per horizon">
+            {selectedInvestorSignals.horizons.map((horizon) => <div className={`investor-strip-item signal-${horizon.signal.toLowerCase()}`} key={horizon.id}>
+              <span>{horizon.label}</span><strong>{horizon.signal}</strong>
+            </div>)}
+          </div>}
+          {selectedInvestorSignals && <div className="investor-mobile-context">
+            <span>Fundamental FY {selectedInvestorSignals.fundamentals.latestFiscalYear ?? "—"} · laba {Number.isFinite(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) : "—"} · pendapatan {Number.isFinite(selectedInvestorSignals.fundamentals.revenueGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.revenueGrowthPercent) : "—"} · EPS {Number.isFinite(selectedInvestorSignals.fundamentals.epsGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.epsGrowthPercent) : "—"}</span>
+            <span>Berita 14 hari: {selectedInvestorSignals.news.status === "unavailable" ? "feed tidak tersedia" : selectedInvestorSignals.news.status === "no-recent-news" ? "belum ada headline emiten" : selectedInvestorSignals.news.tone === "positive" ? "cenderung positif" : selectedInvestorSignals.news.tone === "negative" ? "cenderung negatif" : "campuran / netral"}{selectedInvestorSignals.news.articles[0] ? <> · <a href={selectedInvestorSignals.news.articles[0].link} target="_blank" rel="noopener noreferrer">{selectedInvestorSignals.news.articles[0].title}</a></> : ""}</span>
+          </div>}
+          {!selectedInvestorSignals && investorSignalLoadingTicker === selectedTicker && <div className="investor-signal-strip investor-strip-loading" role="status">Menggabungkan tren, laporan tahunan, dan berita untuk sinyal investor…</div>}
+          {!selectedInvestorSignals && visibleInvestorSignalError && <div className="investor-signal-strip investor-strip-loading investor-signal-error" role="alert">{visibleInvestorSignalError}</div>}
 
           <div className="chart-heading">
             <div className="chart-instrument-title"><SymbolLogo key={selectedTicker} ticker={selectedTicker} color={selectedQuote?.color ?? "#168bcc"} /><strong>{selectedTicker}</strong><span>{selectedQuote?.name}</span><b className="instrument-pill">IDX</b></div>
@@ -953,6 +1000,38 @@ export default function App() {
               <span>Low <b className="negative">{formatPrice(selectedStockData?.dayLow ?? selectedQuote?.dayLow)}</b></span><span>Avg <b>—</b></span>
             </div>
             <div className="market-source-line"><i /> Yahoo Finance · {formatQuoteAge(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} · {formatTime(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} WIB</div>
+          </section>
+
+          <section className="investor-signal-panel" aria-label={`Sinyal investor ${selectedTicker}`}>
+            <div className="investor-signal-heading">
+              <div><strong>Analisis investor</strong><small>Teknikal · fundamental · berita</small></div>
+              <span>{selectedInvestorSignals ? "RINGKASAN" : investorSignalLoadingTicker === selectedTicker ? "MEMPROSES" : "KLIK EMITEN"}</span>
+            </div>
+            {selectedInvestorSignals ? <>
+              <div className="investor-horizons">
+                {selectedInvestorSignals.horizons.map((horizon) => <article className={`investor-horizon signal-${horizon.signal.toLowerCase()}`} key={horizon.id}>
+                  <span>{horizon.label}</span>
+                  <strong>{horizon.signal}<small>{Number.isFinite(horizon.score) ? `Skor ${horizon.score > 0 ? "+" : ""}${horizon.score.toFixed(2)}` : "—"}</small></strong>
+                  <small>{horizon.rationale} · {horizon.technical.evidence.slice(0, 4).join(" · ")}</small>
+                </article>)}
+              </div>
+              <div className="investor-status-grid">
+                <div><span>Fundamental · FY {selectedInvestorSignals.fundamentals.latestFiscalYear ?? "—"}</span><strong className={selectedInvestorSignals.fundamentals.status === "unavailable" ? "negative" : ""}>{selectedInvestorSignals.fundamentals.status === "available" ? "Data lengkap" : selectedInvestorSignals.fundamentals.status === "partial" ? "Data parsial" : "Tidak tersedia"}</strong>
+                  <small>{selectedInvestorSignals.fundamentals.error || `Laba ${Number.isFinite(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) : "—"} · Pendapatan ${Number.isFinite(selectedInvestorSignals.fundamentals.revenueGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.revenueGrowthPercent) : "—"} · EPS ${Number.isFinite(selectedInvestorSignals.fundamentals.epsGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.epsGrowthPercent) : "—"}`}</small>
+                </div>
+                <div><span>Berita 14 hari · {selectedInvestorSignals.news.provider}</span><strong className={`news-tone-${selectedInvestorSignals.news.tone}`}>{selectedInvestorSignals.news.status === "unavailable" ? "Feed tidak tersedia" : selectedInvestorSignals.news.status === "no-recent-news" ? "Belum ada berita" : selectedInvestorSignals.news.tone === "positive" ? "Cenderung positif" : selectedInvestorSignals.news.tone === "negative" ? "Cenderung negatif" : "Campuran / netral"}</strong>
+                  <small>{selectedInvestorSignals.news.error || `${selectedInvestorSignals.news.articles.length} judul terbaru · klasifikasi kata kunci sederhana`}</small>
+                </div>
+              </div>
+              {selectedInvestorSignals.news.articles.length > 0 && <div className="investor-news-evidence">
+                {selectedInvestorSignals.news.articles.slice(0, 3).map((article) => <a key={article.id} href={article.link} target="_blank" rel="noopener noreferrer"><span className={`news-tone-${article.tone}`}>{article.tone === "positive" ? "＋" : article.tone === "negative" ? "−" : "·"}</span>{article.title}</a>)}
+              </div>}
+              <p className="investor-signal-disclaimer">Skor keselarasan bukan probabilitas atau rekomendasi personal. Fundamental memakai laporan tahunan Yahoo Finance; analisis berita berbasis kata kunci, bukan verifikasi fakta. Tinjau laporan emiten/BEI sebelum mengambil keputusan.</p>
+            </> : investorSignalLoadingTicker === selectedTicker
+              ? <p className="investor-signal-state">Membandingkan tren beberapa horizon, laporan tahunan, dan berita emiten…</p>
+              : visibleInvestorSignalError
+                ? <p className="investor-signal-state investor-signal-error" role="alert">{visibleInvestorSignalError}</p>
+                : <p className="investor-signal-state">Klik emiten pada watchlist untuk menghitung sinyal investor. IHSG tidak memiliki data fundamental emiten.</p>}
           </section>
 
           <section className="news-panel" aria-label="Berita pasar Indonesia">

@@ -112,11 +112,14 @@ const marketCache = new Map();
 const marketRequests = new Map();
 const signalCache = new Map();
 const signalRequests = new Map();
+const investorSignalCache = new Map();
+const investorSignalRequests = new Map();
 const newsCache = new Map();
 const newsRequests = new Map();
 const marketCacheTtl = 10_000;
 const signalCacheTtl = 30_000;
 const newsCacheTtl = 5 * 60_000;
+const investorSignalCacheTtl = 15 * 60_000;
 let latestMarketData;
 
 const newsCategories = {
@@ -354,6 +357,294 @@ async function loadStockChart(ticker, rangeKey) {
   };
 }
 
+async function loadAnnualFundamentals(instrument) {
+  const symbol = instrument.providerSymbol;
+  const fundamentalsUrl = new URL(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(symbol)}`);
+  const now = Math.floor(Date.now() / 1000);
+  fundamentalsUrl.search = new URLSearchParams({
+    symbol,
+    type: "annualTotalRevenue,annualNetIncome,annualDilutedEPS,annualTotalDebt,annualStockholdersEquity",
+    period1: String(now - 5 * 365 * 24 * 60 * 60),
+    period2: String(now + 31 * 24 * 60 * 60),
+  });
+  const response = await fetch(fundamentalsUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 NalarIDX/1.0" },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Yahoo Finance Fundamentals merespons HTTP ${response.status}.`);
+  const payload = await response.json();
+  const results = payload.timeseries?.result;
+  if (!Array.isArray(results)) throw new Error("Data laporan fundamental tidak tersedia.");
+
+  const series = new Map(results.map((item) => [
+    item.meta?.type?.[0],
+    (item[item.meta?.type?.[0]] ?? [])
+      .map((entry) => ({
+        date: entry.asOfDate,
+        value: entry.reportedValue?.raw,
+      }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.date)
+      .sort((left, right) => right.date.localeCompare(left.date)),
+  ]));
+  const latest = (name) => series.get(`annual${name}`)?.[0] ?? null;
+  const previous = (name) => series.get(`annual${name}`)?.[1] ?? null;
+  const growth = (name) => {
+    const currentValue = latest(name)?.value;
+    const previousValue = previous(name)?.value;
+    return Number.isFinite(currentValue) && Number.isFinite(previousValue) && previousValue !== 0
+      ? ((currentValue - previousValue) / Math.abs(previousValue)) * 100
+      : null;
+  };
+  const income = latest("NetIncome")?.value;
+  const revenue = latest("TotalRevenue")?.value;
+  const eps = latest("DilutedEPS")?.value;
+  const debt = latest("TotalDebt")?.value;
+  const equity = latest("StockholdersEquity")?.value;
+  const coverage = [income, revenue, eps].filter(Number.isFinite).length;
+  const fundamentals = {
+    status: coverage === 3 ? "available" : coverage ? "partial" : "unavailable",
+    coverage,
+    latestFiscalYear: latest("NetIncome")?.date?.slice(0, 4) ?? latest("TotalRevenue")?.date?.slice(0, 4) ?? null,
+    previousFiscalYear: previous("NetIncome")?.date?.slice(0, 4) ?? previous("TotalRevenue")?.date?.slice(0, 4) ?? null,
+    revenueGrowthPercent: growth("TotalRevenue"),
+    netIncomeGrowthPercent: growth("NetIncome"),
+    epsGrowthPercent: growth("DilutedEPS"),
+    netIncome: Number.isFinite(income) ? income : null,
+    eps: Number.isFinite(eps) ? eps : null,
+    debtToEquity: Number.isFinite(debt) && Number.isFinite(equity) && equity > 0 ? debt / equity : null,
+    sector: instrument.sector,
+  };
+  fundamentals.score = scoreFundamentals(fundamentals);
+  return fundamentals;
+}
+
+function scoreFundamentals(fundamentals) {
+  if (fundamentals.coverage < 2) return null;
+  const checks = [];
+  if (Number.isFinite(fundamentals.netIncome)) {
+    checks.push(fundamentals.netIncome > 0 ? 1 : -1);
+  }
+  if (Number.isFinite(fundamentals.netIncomeGrowthPercent)) {
+    checks.push(fundamentals.netIncomeGrowthPercent > 5 ? 1 : fundamentals.netIncomeGrowthPercent < -5 ? -1 : 0);
+  }
+  if (Number.isFinite(fundamentals.revenueGrowthPercent)) {
+    checks.push(fundamentals.revenueGrowthPercent > 5 ? 0.5 : fundamentals.revenueGrowthPercent < -5 ? -0.5 : 0);
+  }
+  if (Number.isFinite(fundamentals.epsGrowthPercent)) {
+    checks.push(fundamentals.epsGrowthPercent > 5 ? 0.5 : fundamentals.epsGrowthPercent < -5 ? -0.5 : 0);
+  }
+  if (fundamentals.sector !== "Bank" && Number.isFinite(fundamentals.debtToEquity) && fundamentals.debtToEquity > 2) {
+    checks.push(-0.75);
+  }
+  if (fundamentals.status === "unavailable" || checks.length < 2) return null;
+  return Math.max(-1, Math.min(1, checks.reduce((total, value) => total + value, 0) / 2.5));
+}
+
+function classifyNewsTitle(title) {
+  const normalized = title.toLocaleLowerCase("id-ID");
+  const positiveWords = ["laba", "untung", "tumbuh", "meningkat", "menguat", "naik", "dividen", "rekor", "ekspansi", "kontrak baru", "buyback", "pulih"];
+  const negativeWords = ["rugi", "merugi", "anjlok", "merosot", "melemah", "turun", "utang", "gagal", "sanksi", "denda", "default", "phk", "korupsi", "terjerat", "penurunan"];
+  const positiveHits = positiveWords.filter((word) => normalized.includes(word)).length;
+  const negativeHits = negativeWords.filter((word) => normalized.includes(word)).length;
+  if (positiveHits > negativeHits) return "positive";
+  if (negativeHits > positiveHits) return "negative";
+  return "neutral";
+}
+
+function evaluateInvestorTrend(candles, horizon) {
+  const closes = candles.map((candle) => candle.close).filter(Number.isFinite);
+  const required = Math.max(horizon.fastPeriod, horizon.slowPeriod, horizon.shortMomentum, horizon.longMomentum + 1);
+  if (closes.length < required) {
+    return { status: "unavailable", score: null, evidence: [`Data historis belum cukup (${closes.length}/${required} candle).`] };
+  }
+  const average = (period) => closes.slice(-period).reduce((total, close) => total + close, 0) / period;
+  const latest = closes.at(-1);
+  const fastAverage = average(horizon.fastPeriod);
+  const slowAverage = average(horizon.slowPeriod);
+  const shortReturn = ((latest - closes.at(-(horizon.shortMomentum + 1))) / closes.at(-(horizon.shortMomentum + 1))) * 100;
+  const longReturn = ((latest - closes.at(-(horizon.longMomentum + 1))) / closes.at(-(horizon.longMomentum + 1))) * 100;
+  const observations = [
+    { positive: latest > fastAverage, negative: latest < fastAverage, up: `Harga di atas rata-rata ${horizon.fastPeriod} candle`, down: `Harga di bawah rata-rata ${horizon.fastPeriod} candle` },
+    { positive: fastAverage > slowAverage, negative: fastAverage < slowAverage, up: `Rata-rata ${horizon.fastPeriod} di atas ${horizon.slowPeriod}`, down: `Rata-rata ${horizon.fastPeriod} di bawah ${horizon.slowPeriod}` },
+    { positive: shortReturn > 1, negative: shortReturn < -1, up: `Momentum ${horizon.shortMomentum} candle +${shortReturn.toFixed(1)}%`, down: `Momentum ${horizon.shortMomentum} candle ${shortReturn.toFixed(1)}%` },
+    { positive: longReturn > 1, negative: longReturn < -1, up: `Momentum ${horizon.longMomentum} candle +${longReturn.toFixed(1)}%`, down: `Momentum ${horizon.longMomentum} candle ${longReturn.toFixed(1)}%` },
+  ];
+  const score = observations.reduce((total, item) => total + (item.positive ? 1 : item.negative ? -1 : 0), 0) / observations.length;
+  const volumeCandles = candles.slice(-25);
+  const recentVolume = volumeCandles.slice(-5).map(({ volume }) => volume).filter((volume) => Number.isFinite(volume) && volume > 0);
+  const baselineVolume = volumeCandles.slice(0, 20).map(({ volume }) => volume).filter((volume) => Number.isFinite(volume) && volume > 0);
+  const volumeRatio = recentVolume.length && baselineVolume.length
+    ? (recentVolume.reduce((total, volume) => total + volume, 0) / recentVolume.length)
+      / (baselineVolume.reduce((total, volume) => total + volume, 0) / baselineVolume.length || 1)
+    : null;
+  const evidence = observations.map((item) => item.positive ? item.up : item.negative ? item.down : "Momentum harga belum menunjukkan arah kuat");
+  if (Number.isFinite(volumeRatio)) evidence.push(`Volume terkini ${volumeRatio.toFixed(1)}× rata-rata 20 candle sebelumnya`);
+  return { status: "available", score, evidence, candlesAnalyzed: closes.length, volumeRatio };
+}
+
+function combineInvestorSignal(horizon, technical, fundamentals, newsScore, newsStatus) {
+  if (technical.status !== "available") {
+    return { signal: "WAIT", score: null, rationale: technical.evidence[0] };
+  }
+  if (!Number.isFinite(fundamentals.score)) {
+    return { signal: "WAIT", score: null, rationale: "Data fundamental tahunan belum cukup; sinyal investor ditahan agar tidak mengandalkan teknikal saja." };
+  }
+  if (!Number.isFinite(newsScore) || newsStatus !== "available") {
+    return { signal: "WAIT", score: null, rationale: "Berita emiten terbaru belum cukup untuk membaca sentimen; tunggu berita relevan sebelum memakai sinyal gabungan." };
+  }
+  const weights = horizon.weights;
+  const totalWeight = weights.technical + weights.fundamental + weights.news;
+  const score = (
+    technical.score * weights.technical
+    + fundamentals.score * weights.fundamental
+    + newsScore * weights.news
+  ) / totalWeight;
+  let signal = score >= 0.2 ? "BUY" : score <= -0.2 ? "SELL" : "WAIT";
+  let rationale;
+  if (signal === "BUY" && technical.score <= -0.5) {
+    signal = "WAIT";
+    rationale = "Fundamental atau berita positif belum dikonfirmasi tren harga; tunggu stabilisasi sebelum sinyal investor.";
+  } else if (signal === "SELL" && technical.score >= 0.5) {
+    signal = "WAIT";
+    rationale = "Tren harga masih kuat naik meski fundamental atau berita melemah; tunggu konfirmasi sebelum sinyal investor.";
+  } else {
+    rationale = `Tren ${technical.score > 0.2 ? "naik" : technical.score < -0.2 ? "turun" : "campuran"}; fundamental ${fundamentals.score > 0.2 ? "membaik" : fundamentals.score < -0.2 ? "melemah" : "campuran"}; sentimen headline ${newsScore > 0.2 ? "positif" : newsScore < -0.2 ? "negatif" : "campuran/netral"}.`;
+  }
+  return {
+    signal,
+    score: Number(score.toFixed(2)),
+    rationale,
+  };
+}
+
+async function loadInvestorNews(instrument) {
+  const cacheKey = `investor:${instrument.ticker}`;
+  const cached = newsCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < newsCacheTtl) return cached;
+  let request = newsRequests.get(cacheKey);
+  if (!request) {
+    const shortName = instrument.name.replace(/\s*\([^)]*\)/g, "").replace(/\bTbk\b/gi, "").trim();
+    const companyTerms = shortName.toLocaleLowerCase("id-ID")
+      .split(/\s+/)
+      .filter((word) => word.length >= 4 && !["bank", "group", "energy", "holding", "indonesia", "international", "persero", "resources", "company", "corporation", "development"].includes(word));
+    const tickerPattern = new RegExp(`\\b${instrument.ticker}\\b`, "i");
+    const queries = instrument.ticker === indexInstrument.ticker
+      ? ["IHSG Indonesia saham bursa"]
+      : [`"${instrument.ticker}" "${shortName}" saham Indonesia`, `"${instrument.ticker}" saham Indonesia`];
+    request = (async () => {
+      let articles = [];
+      let lastError;
+      for (const query of queries) {
+        const feedUrl = new URL("https://news.google.com/rss/search");
+        feedUrl.search = new URLSearchParams({ q: query, hl: "id", gl: "ID", ceid: "ID:id" });
+        const response = await fetch(feedUrl, {
+          headers: { "User-Agent": "NalarMarketNews/1.0 (+https://nalar-ai-idx.vercel.app)" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) {
+          lastError = new Error(`Google News RSS merespons HTTP ${response.status}.`);
+          if (response.status === 404) continue;
+          throw lastError;
+        }
+        lastError = null;
+        articles = parseNewsFeed(await readNewsResponse(response))
+          .filter((article) => tickerPattern.test(article.title)
+            || companyTerms.filter((term) => article.title.toLocaleLowerCase("id-ID").includes(term)).length >= Math.min(2, companyTerms.length || 1))
+          .filter((article) => Date.now() - article.publishedAt <= 30 * 24 * 60 * 60_000);
+        if (articles.length) break;
+      }
+      if (lastError && !articles.length) throw lastError;
+      const result = { articles, fetchedAt: Date.now(), provider: "Google News RSS" };
+      newsCache.set(cacheKey, result);
+      return result;
+    })();
+    newsRequests.set(cacheKey, request);
+  }
+  try {
+    return await request;
+  } catch (error) {
+    if (cached) return { ...cached, stale: true };
+    throw error;
+  } finally {
+    if (newsRequests.get(cacheKey) === request) newsRequests.delete(cacheKey);
+  }
+}
+
+async function loadInvestorSignals(ticker) {
+  const instrument = marketInstruments.find((stock) => stock.ticker === ticker);
+  const horizonConfigs = [
+    { id: "swing", label: "Swing · 1–4 minggu", range: "3M", fastPeriod: 20, slowPeriod: 50, shortMomentum: 20, longMomentum: 60, weights: { technical: 0.55, fundamental: 0.2, news: 0.25 } },
+    { id: "medium", label: "Menengah · 3–12 bulan", range: "1Y", fastPeriod: 50, slowPeriod: 200, shortMomentum: 63, longMomentum: 126, weights: { technical: 0.4, fundamental: 0.4, news: 0.2 } },
+    { id: "long", label: "Panjang · >1 tahun", range: "5Y", fastPeriod: 26, slowPeriod: 52, shortMomentum: 52, longMomentum: 104, weights: { technical: 0.25, fundamental: 0.6, news: 0.15 } },
+  ];
+  const settled = await Promise.allSettled([
+    ...horizonConfigs.map(({ range }) => loadStockChart(ticker, range)),
+    loadAnnualFundamentals(instrument),
+    loadInvestorNews(instrument),
+  ]);
+  const charts = settled.slice(0, horizonConfigs.length);
+  const fundamentalsResult = settled[horizonConfigs.length];
+  const newsResult = settled[horizonConfigs.length + 1];
+  const fundamentals = fundamentalsResult.status === "fulfilled"
+    ? fundamentalsResult.value
+    : {
+      status: "unavailable",
+      score: null,
+      sector: instrument.sector,
+      error: fundamentalsResult.reason?.message ?? "Data fundamental tidak tersedia.",
+    };
+  const newsFeed = newsResult.status === "fulfilled" ? newsResult.value : null;
+  if (fundamentalsResult.status === "rejected") {
+    console.error(`Investor fundamentals error (${ticker}):`, fundamentals.error);
+  }
+  if (newsResult.status === "rejected") {
+    console.error(`Investor news error (${ticker}):`, newsResult.reason?.message);
+  }
+  const recentArticles = (newsFeed?.articles ?? [])
+    .filter((article) => Date.now() - article.publishedAt <= 14 * 24 * 60 * 60_000)
+    .slice(0, 12)
+    .map((article) => ({ ...article, tone: classifyNewsTitle(article.title) }));
+  const classifiedArticles = recentArticles.filter((article) => article.tone !== "neutral");
+  const newsScore = classifiedArticles.length
+    ? classifiedArticles.reduce((total, article) => total + (article.tone === "positive" ? 1 : -1), 0) / classifiedArticles.length
+    : null;
+  const newsSentiment = {
+    status: newsResult.status === "fulfilled" ? recentArticles.length ? "available" : "no-recent-news" : "unavailable",
+    tone: Number.isFinite(newsScore) ? newsScore > 0.2 ? "positive" : newsScore < -0.2 ? "negative" : "mixed" : "neutral",
+    score: newsScore,
+    articles: recentArticles.slice(0, 5),
+    provider: "Google News RSS",
+    error: newsResult.status === "rejected" ? newsResult.reason?.message ?? "Feed berita belum tersedia." : null,
+  };
+  const horizons = horizonConfigs.map((horizon, index) => {
+    const chartResult = charts[index];
+    if (chartResult.status === "rejected") {
+      console.error(`Investor trend error (${ticker}, ${horizon.id}):`, chartResult.reason?.message);
+    }
+    const technical = chartResult.status === "fulfilled"
+      ? evaluateInvestorTrend(chartResult.value.chart, horizon)
+      : { status: "unavailable", score: null, evidence: [chartResult.reason?.message ?? "Data historis jangka ini gagal dimuat."] };
+    const combined = combineInvestorSignal(horizon, technical, fundamentals, newsScore, newsSentiment.status);
+    return {
+      id: horizon.id,
+      label: horizon.label,
+      signal: combined.signal,
+      score: combined.score,
+      rationale: combined.rationale,
+      technical,
+      weights: horizon.weights,
+    };
+  });
+  return {
+    ticker,
+    generatedAt: Date.now(),
+    provider: { market: "Yahoo Finance", fundamentals: "Yahoo Finance annual financials", news: newsSentiment.provider },
+    fundamentals,
+    news: newsSentiment,
+    horizons,
+  };
+}
+
 app.get("/api/news", async (req, res) => {
   const category = String(req.query.category ?? "market");
   const ticker = String(req.query.ticker ?? "").toUpperCase();
@@ -503,6 +794,35 @@ app.get("/api/market/stocks/:ticker", async (req, res) => {
     if (marketRequests.get(cacheKey) === stockRequest) {
       marketRequests.delete(cacheKey);
     }
+  }
+});
+
+app.get("/api/market/investor-signals/:ticker", async (req, res) => {
+  const ticker = String(req.params.ticker).toUpperCase();
+  if (!marketInstruments.some((instrument) => instrument.ticker === ticker)) {
+    return res.status(400).json({ error: "Sinyal investor hanya tersedia untuk emiten, bukan indeks atau ticker yang tidak terdaftar." });
+  }
+
+  const cached = investorSignalCache.get(ticker);
+  if (cached && Date.now() - cached.generatedAt < investorSignalCacheTtl) {
+    return res.json(cached);
+  }
+  let request = investorSignalRequests.get(ticker);
+  if (!request) {
+    request = loadInvestorSignals(ticker).then((signals) => {
+      investorSignalCache.set(ticker, signals);
+      if (investorSignalCache.size > 100) investorSignalCache.delete(investorSignalCache.keys().next().value);
+      return signals;
+    });
+    investorSignalRequests.set(ticker, request);
+  }
+  try {
+    return res.json(await request);
+  } catch (error) {
+    console.error(`Investor signal error (${ticker}):`, error.message);
+    return res.status(502).json({ error: "Sinyal investor belum dapat dihitung. Periksa koneksi data dan coba lagi." });
+  } finally {
+    if (investorSignalRequests.get(ticker) === request) investorSignalRequests.delete(ticker);
   }
 });
 
