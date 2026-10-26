@@ -740,3 +740,37 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 .terminal-ai,.scalping-panel,.quote-card,.watchlist-panel {
   -webkit-font-smoothing: antialiased;
 }
+
+@media (max-width: 950px) {
+  .terminal-layout {
+    height: auto;
+    min-height: calc(100vh - 52px);
+    grid-template-columns: 44px 220px minmax(0,1fr);
+    grid-template-rows: minmax(620px,calc(100vh - 52px)) auto;
+    overflow: visible;
+  }
+  .terminal-rail { grid-column: 1; grid-row: 1 / 3; }
+  .watchlist-panel { grid-column: 2; grid-row: 1; }
+  .chart-workspace { grid-column: 3; grid-row: 1; }
+  .market-sidepanel {
+    display: flex;
+    grid-column: 2 / 4;
+    grid-row: 2;
+    min-height: 0;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 680px) {
+  .terminal-layout {
+    min-height: 0;
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: auto;
+  }
+  .terminal-rail,.watchlist-panel,.chart-workspace,.market-sidepanel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .market-sidepanel { display: flex; }
+  .investor-mobile-context > span { overflow-wrap: anywhere; white-space: normal; }
+}

@@ -35,7 +35,7 @@ function formatPrice(value) {
 }
 
 function formatVolume(value) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value) || value <= 0) return "—";
   return new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 2 }).format(value);
 }
 
@@ -100,8 +100,8 @@ function getTechnicalSnapshot(candles) {
     return Math.max(candle.high - candle.low, Math.abs(candle.high - previousClose), Math.abs(candle.low - previousClose));
   });
   const atr = trueRanges.length ? trueRanges.reduce((total, range) => total + range, 0) / trueRanges.length : null;
-  const recentVolumes = candles.slice(-3).map((candle) => candle.volume).filter(Number.isFinite);
-  const baselineVolumes = candles.slice(-15, -3).map((candle) => candle.volume).filter(Number.isFinite);
+  const recentVolumes = candles.slice(-3).map((candle) => candle.volume).filter((volume) => Number.isFinite(volume) && volume > 0);
+  const baselineVolumes = candles.slice(-15, -3).map((candle) => candle.volume).filter((volume) => Number.isFinite(volume) && volume > 0);
   const volumeRatio = recentVolumes.length && baselineVolumes.length
     ? (recentVolumes.reduce((total, volume) => total + volume, 0) / recentVolumes.length)
       / (baselineVolumes.reduce((total, volume) => total + volume, 0) / baselineVolumes.length || 1)
@@ -543,6 +543,7 @@ export default function App() {
   const selectedInvestorSignals = investorSignalData?.ticker === selectedTicker ? investorSignalData : null;
   const visibleLocalSignalError = localSignalErrorTicker === selectedTicker ? localSignalError : "";
   const visibleInvestorSignalError = investorSignalErrorTicker === selectedTicker ? investorSignalError : "";
+  const newsTicker = newsCategory === "ticker" ? selectedTicker : "";
   const visibleStockError = stockErrorTicker === selectedTicker ? stockError : "";
   const latestCandle = candles.at(-1);
   const technicalSnapshot = useMemo(() => getTechnicalSnapshot(candles), [candles]);
@@ -553,7 +554,13 @@ export default function App() {
   const rewardRiskValue = Number(rewardRisk);
   const riskAmount = capitalValue > 0 && riskValue > 0 && riskValue <= 100 ? capitalValue * riskValue / 100 : 0;
   const stopDistance = Number.isFinite(entryPrice) && stopValue > 0 ? entryPrice * stopValue / 100 : 0;
-  const lotSize = stopDistance > 0 ? Math.max(0, Math.floor(riskAmount / (stopDistance * 100))) : 0;
+  const riskBasedLotSize = stopDistance > 0 ? Math.max(0, Math.floor(riskAmount / (stopDistance * 100))) : 0;
+  const affordableLotSize = Number.isFinite(entryPrice) && entryPrice > 0 && capitalValue > 0
+    ? Math.floor(capitalValue / (entryPrice * 100))
+    : 0;
+  const lotSize = selectedTicker === "IHSG" ? 0 : Math.min(riskBasedLotSize, affordableLotSize);
+  const positionValue = Number.isFinite(entryPrice) ? entryPrice * lotSize * 100 : 0;
+  const positionRisk = stopDistance * lotSize * 100;
   const targetPrice = Number.isFinite(entryPrice) && stopDistance > 0 && rewardRiskValue > 0
     ? entryPrice + stopDistance * rewardRiskValue
     : NaN;
@@ -605,7 +612,7 @@ export default function App() {
     const requestId = newsRequestId.current + 1;
     newsRequestId.current = requestId;
     const params = new URLSearchParams({ category: newsCategory });
-    if (newsCategory === "ticker") params.set("ticker", selectedTicker);
+    if (newsTicker) params.set("ticker", newsTicker);
     if (newsSearch) params.set("q", newsSearch);
 
     fetch(`/api/news?${params}`, { cache: "no-store" })
@@ -636,7 +643,7 @@ export default function App() {
       window.clearInterval(interval);
       newsRequestId.current += 1;
     };
-  }, [newsCategory, newsSearch, newsRefreshVersion, selectedTicker]);
+  }, [newsCategory, newsSearch, newsRefreshVersion, newsTicker]);
 
   function changeChartZoom(direction) {
     const maximum = Math.max(20, candles.length);
@@ -713,6 +720,14 @@ export default function App() {
   }
 
   async function requestInvestorSignals(ticker) {
+    if (ticker === "IHSG") {
+      investorSignalRequestId.current += 1;
+      setInvestorSignalData(null);
+      setInvestorSignalLoadingTicker("");
+      setInvestorSignalError("");
+      setInvestorSignalErrorTicker("");
+      return;
+    }
     const requestId = investorSignalRequestId.current + 1;
     investorSignalRequestId.current = requestId;
     setInvestorSignalLoadingTicker(ticker);
@@ -741,7 +756,7 @@ export default function App() {
   }
 
   function recordPaperPlan() {
-    if (!Number.isFinite(entryPrice) || lotSize <= 0 || !Number.isFinite(targetPrice)) return;
+    if (selectedTicker === "IHSG" || !Number.isFinite(entryPrice) || lotSize <= 0 || !Number.isFinite(targetPrice)) return;
     setPaperJournal((current) => [{
       id: `${Date.now()}-${selectedTicker}`,
       ticker: selectedTicker,
@@ -1017,7 +1032,7 @@ export default function App() {
               </div>
               <div className="investor-status-grid">
                 <div><span>Fundamental · FY {selectedInvestorSignals.fundamentals.latestFiscalYear ?? "—"}</span><strong className={selectedInvestorSignals.fundamentals.status === "unavailable" ? "negative" : ""}>{selectedInvestorSignals.fundamentals.status === "available" ? "Data lengkap" : selectedInvestorSignals.fundamentals.status === "partial" ? "Data parsial" : "Tidak tersedia"}</strong>
-                  <small>{selectedInvestorSignals.fundamentals.error || `Laba ${Number.isFinite(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) : "—"} · Pendapatan ${Number.isFinite(selectedInvestorSignals.fundamentals.revenueGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.revenueGrowthPercent) : "—"} · EPS ${Number.isFinite(selectedInvestorSignals.fundamentals.epsGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.epsGrowthPercent) : "—"}`}</small>
+                  <small>{selectedInvestorSignals.fundamentals.error || `Laba ${Number.isFinite(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.netIncomeGrowthPercent) : "—"} · Pendapatan ${Number.isFinite(selectedInvestorSignals.fundamentals.revenueGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.revenueGrowthPercent) : "—"} · EPS ${Number.isFinite(selectedInvestorSignals.fundamentals.epsGrowthPercent) ? formatChange(selectedInvestorSignals.fundamentals.epsGrowthPercent) : "—"} · PER/FY EPS ${Number.isFinite(selectedInvestorSignals.fundamentals.priceToEarnings) ? `${selectedInvestorSignals.fundamentals.priceToEarnings.toFixed(1)}×` : "—"} · D/E ${Number.isFinite(selectedInvestorSignals.fundamentals.debtToEquity) ? `${selectedInvestorSignals.fundamentals.debtToEquity.toFixed(2)}×` : "—"}`}</small>
                 </div>
                 <div><span>Berita 14 hari · {selectedInvestorSignals.news.provider}</span><strong className={`news-tone-${selectedInvestorSignals.news.tone}`}>{selectedInvestorSignals.news.status === "unavailable" ? "Feed tidak tersedia" : selectedInvestorSignals.news.status === "no-recent-news" ? "Belum ada berita" : selectedInvestorSignals.news.tone === "positive" ? "Cenderung positif" : selectedInvestorSignals.news.tone === "negative" ? "Cenderung negatif" : "Campuran / netral"}</strong>
                   <small>{selectedInvestorSignals.news.error || `${selectedInvestorSignals.news.articles.length} judul terbaru · klasifikasi kata kunci sederhana`}</small>
@@ -1070,7 +1085,7 @@ export default function App() {
             <div className="scalp-snapshot">
               <div><span>RSI 14</span><strong className={technicalSnapshot?.rsi >= 70 ? "negative" : technicalSnapshot?.rsi <= 30 ? "positive" : ""}>{technicalSnapshot ? technicalSnapshot.rsi.toFixed(1) : "—"}</strong><small>{technicalSnapshot ? technicalSnapshot.rsi >= 70 ? "Jenuh beli" : technicalSnapshot.rsi <= 30 ? "Jenuh jual" : "Netral" : "Data belum cukup"}</small></div>
               <div><span>ATR 14</span><strong>{formatPrice(technicalSnapshot?.atr)}</strong><small>Rentang rata-rata</small></div>
-              <div><span>Volume relatif</span><strong>{Number.isFinite(technicalSnapshot?.volumeRatio) ? `${technicalSnapshot.volumeRatio.toFixed(2)}×` : "—"}</strong><small>3 candle vs 12 sebelumnya</small></div>
+              <div><span>Volume relatif</span><strong>{Number.isFinite(technicalSnapshot?.volumeRatio) ? `${technicalSnapshot.volumeRatio.toFixed(2)}×` : "—"}</strong><small>{Number.isFinite(technicalSnapshot?.volumeRatio) ? "3 candle vs 12 sebelumnya" : "Data volume belum tersedia"}</small></div>
               <div><span>EMA 9</span><strong>{formatPrice(technicalSnapshot?.ema9)}</strong><small>{Number.isFinite(entryPrice) && technicalSnapshot ? entryPrice >= technicalSnapshot.ema9 ? "Harga di atas EMA" : "Harga di bawah EMA" : "Menunggu data"}</small></div>
               <div><span>MACD histogram</span><strong className={technicalSnapshot?.macdHistogram > 0 ? "positive" : technicalSnapshot?.macdHistogram < 0 ? "negative" : ""}>{formatPrice(technicalSnapshot?.macdHistogram)}</strong><small>{Number.isFinite(technicalSnapshot?.macdHistogram) ? technicalSnapshot.macdHistogram > 0 ? "Momentum naik" : technicalSnapshot.macdHistogram < 0 ? "Momentum turun" : "Netral" : "Data belum cukup"}</small></div>
               <div><span>Stochastic %K</span><strong className={technicalSnapshot?.stochastic >= 80 ? "negative" : technicalSnapshot?.stochastic <= 20 ? "positive" : ""}>{Number.isFinite(technicalSnapshot?.stochastic) ? technicalSnapshot.stochastic.toFixed(1) : "—"}</strong><small>{Number.isFinite(technicalSnapshot?.stochasticSignal) ? `%D ${technicalSnapshot.stochasticSignal.toFixed(1)}` : "Data belum cukup"}</small></div>
@@ -1092,9 +1107,14 @@ export default function App() {
             <div className="risk-result-grid">
               <span>Risiko anggaran <b>{formatPrice(riskAmount)}</b></span>
               <span>Ukuran posisi <b>{lotSize.toLocaleString("id-ID")} lot</b></span>
+              <span>Modal digunakan <b>{formatPrice(positionValue)}</b></span>
+              <span>Risiko posisi <b>{formatPrice(positionRisk)}</b></span>
               <span>Stop simulasi <b>{formatPrice(Number(entryPrice) - stopDistance)}</b></span>
               <span>Target simulasi <b>{formatPrice(targetPrice)}</b></span>
             </div>
+            {selectedTicker === "IHSG"
+              ? <p className="scalp-note">Kalkulator posisi hanya berlaku untuk emiten; IHSG bukan saham yang dapat dibeli langsung.</p>
+              : riskBasedLotSize > affordableLotSize && affordableLotSize >= 0 && <p className="scalp-note">Ukuran posisi dibatasi agar nilai pembelian tidak melebihi modal.</p>}
             <button className="paper-plan-button" type="button" onClick={recordPaperPlan} disabled={lotSize <= 0 || !Number.isFinite(entryPrice) || !Number.isFinite(targetPrice)}>Catat rencana simulasi</button>
             <p className="scalp-disclaimer">Perkiraan edukasi, belum termasuk fee, slippage, fraksi harga, likuiditas, dan risiko gap. Bukan instruksi transaksi.</p>
 

@@ -573,7 +573,7 @@ async function loadInvestorNews(instrument) {
 async function loadInvestorSignals(ticker) {
   const instrument = marketInstruments.find((stock) => stock.ticker === ticker);
   const horizonConfigs = [
-    { id: "swing", label: "Swing · 1–4 minggu", range: "3M", fastPeriod: 20, slowPeriod: 50, shortMomentum: 20, longMomentum: 60, weights: { technical: 0.55, fundamental: 0.2, news: 0.25 } },
+    { id: "swing", label: "Swing · 1–4 minggu", range: "1M", fastPeriod: 5, slowPeriod: 20, shortMomentum: 5, longMomentum: 20, weights: { technical: 0.55, fundamental: 0.2, news: 0.25 } },
     { id: "medium", label: "Menengah · 3–12 bulan", range: "1Y", fastPeriod: 50, slowPeriod: 200, shortMomentum: 63, longMomentum: 126, weights: { technical: 0.4, fundamental: 0.4, news: 0.2 } },
     { id: "long", label: "Panjang · >1 tahun", range: "5Y", fastPeriod: 26, slowPeriod: 52, shortMomentum: 52, longMomentum: 104, weights: { technical: 0.25, fundamental: 0.6, news: 0.15 } },
   ];
@@ -593,6 +593,10 @@ async function loadInvestorSignals(ticker) {
       sector: instrument.sector,
       error: fundamentalsResult.reason?.message ?? "Data fundamental tidak tersedia.",
     };
+  const latestPrice = charts.find((result) => result.status === "fulfilled")?.value.price;
+  fundamentals.priceToEarnings = Number.isFinite(latestPrice) && Number.isFinite(fundamentals.eps) && fundamentals.eps > 0
+    ? latestPrice / fundamentals.eps
+    : null;
   const newsFeed = newsResult.status === "fulfilled" ? newsResult.value : null;
   if (fundamentalsResult.status === "rejected") {
     console.error(`Investor fundamentals error (${ticker}):`, fundamentals.error);
