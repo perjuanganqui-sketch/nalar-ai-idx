@@ -115,6 +115,8 @@ button { font: inherit; }
 .candles-container { min-height: 0; flex: 1; display: flex; align-items: stretch; padding: 0 4px; }
 .candle-svg { width: 100%; height: 100%; overflow: visible; }
 .candle-svg.drawing-active { cursor: crosshair; }
+.candle-svg:not(.drawing-active) { cursor: grab; touch-action: none; user-select: none; }
+.candle-svg.chart-dragging { cursor: grabbing; }
 .chart-drawing { fill: none; stroke: #f2bb4b; stroke-width: 2; stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .trend-drawing { stroke: #8ab9f5; stroke-dasharray: none; }
 .drawing-label { fill: #f2bb4b; font-size: 9px; font-family: "DM Sans",sans-serif; }
