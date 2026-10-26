@@ -55,12 +55,14 @@ function formatQuoteAge(timestamp) {
   return `data ${Math.floor(ageSeconds / 3600)} jam tertinggal`;
 }
 
-function formatDate(timestamp) {
+function formatChartDate(timestamp, period) {
   if (!timestamp) return "—";
+  if (period === "1D") return formatTime(timestamp);
   return new Intl.DateTimeFormat("id-ID", {
     timeZone: "Asia/Jakarta",
     day: "2-digit",
     month: "short",
+    year: "2-digit",
   }).format(timestamp);
 }
 
@@ -174,8 +176,21 @@ function Sparkline({ values, positive }) {
   return <svg className={`watch-spark ${positive ? "up" : "down"}`} viewBox="0 0 76 24" aria-hidden="true"><path d={path} /></svg>;
 }
 
-function CandleChart({ candles, period, showAverages, showVolume, showRsi, drawings, activeTool, pendingPoint, aiSignal, onChartClick }) {
-  const visible = candles.slice(-110);
+function CandleChart({ candles, period, visibleCount, showAverages, showVolume, showRsi, drawings, activeTool, pendingPoint, aiSignal, onChartClick, onZoom }) {
+  const chartRef = useRef(null);
+  const visible = candles.slice(-visibleCount);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return undefined;
+    const handleWheel = (event) => {
+      event.preventDefault();
+      onZoom(event.deltaY < 0 ? "in" : "out");
+    };
+    chart.addEventListener("wheel", handleWheel, { passive: false });
+    return () => chart.removeEventListener("wheel", handleWheel);
+  });
+
   if (!visible.length) return <div className="chart-placeholder">Menunggu data grafik...</div>;
 
   const chartWidth = 1000;
@@ -220,11 +235,11 @@ function CandleChart({ candles, period, showAverages, showVolume, showRsi, drawi
   const rsiPath = pathFor(rsiValues.map((value) => rsiTop + ((100 - value) / 100) * (rsiBottom - rsiTop)), chartWidth - left - right, 1);
   const dateLabels = Array.from({ length: 6 }, (_, index) => {
     const point = visible[Math.round((index / 5) * (visible.length - 1))];
-    return point ? { x: xFor(Math.round((index / 5) * (visible.length - 1))), label: period === "1D" || period === "5D" ? formatTime(point.time) : formatDate(point.time) } : null;
-  });
+    return point ? { x: xFor(Math.round((index / 5) * (visible.length - 1))), label: formatChartDate(point.time, period) } : null;
+  }).filter((item, index, labels) => item && labels.findIndex((label) => label?.label === item.label) === index);
 
   return (
-    <svg className={`candle-svg ${activeTool !== "select" ? "drawing-active" : ""}`} viewBox={`0 0 ${chartWidth} ${showRsi ? 575 : 540}`} preserveAspectRatio="none" role="img" aria-label={`Grafik candlestick periode ${period}`} onClick={(event) => onChartClick(event, { chartWidth, chartHeight: showRsi ? 575 : 540, left, right, plotTop, plotBottom })}>
+    <svg ref={chartRef} className={`candle-svg ${activeTool !== "select" ? "drawing-active" : ""}`} viewBox={`0 0 ${chartWidth} ${showRsi ? 575 : 540}`} preserveAspectRatio="none" role="img" aria-label={`Grafik candlestick periode ${period}`} onClick={(event) => onChartClick(event, { chartWidth, chartHeight: showRsi ? 575 : 540, left, right, plotTop, plotBottom })}>
       {[0, 1, 2, 3, 4].map((index) => {
         const y = plotTop + (index / 4) * (plotBottom - plotTop);
         const value = chartMax - (index / 4) * range;
@@ -305,6 +320,7 @@ export default function App() {
   const [rewardRisk, setRewardRisk] = useState("2");
   const [paperJournal, setPaperJournal] = useState([]);
   const [watchlistSort, setWatchlistSort] = useState("change");
+  const [chartCandleCount, setChartCandleCount] = useState(110);
   const [activeTool, setActiveTool] = useState("select");
   const [drawingsByTicker, setDrawingsByTicker] = useState({});
   const [pendingPoint, setPendingPoint] = useState(null);
@@ -404,6 +420,21 @@ export default function App() {
   useEffect(() => () => {
     for (const timer of priceFlashTimers.current.values()) window.clearTimeout(timer);
   }, []);
+
+  function changeChartZoom(direction) {
+    setChartCandleCount((current) => {
+      const maximum = Math.max(20, candles.length);
+      const next = direction === "in"
+        ? Math.floor(current / 1.25)
+        : Math.ceil(current * 1.25);
+      return Math.max(20, Math.min(maximum, next));
+    });
+  }
+
+  function selectStock(ticker) {
+    setSelectedTicker(ticker);
+    setChartCandleCount(110);
+  }
 
   function refreshData() {
     setRefreshVersion((version) => version + 1);
@@ -614,7 +645,7 @@ export default function App() {
           <label className="watchlist-search"><Icon name="search" size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari ticker..." /></label>
           <div className="watchlist-columns"><span>INSTRUMEN</span><span>HARGA / PERUBAHAN</span></div>
           <div className="watchlist-scroll">
-            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan minta analisis sinyal AI`} onClick={() => { setSelectedTicker(quote.ticker); requestAiSignal(quote.ticker); }}>
+            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan minta analisis sinyal AI`} onClick={() => { selectStock(quote.ticker); requestAiSignal(quote.ticker); }}>
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
@@ -624,7 +655,7 @@ export default function App() {
             {searchResults.map((instrument) => <button key={instrument.ticker} className="watch-row watch-row-search-result" onClick={() => {
               setAddedTickers((current) => current.includes(instrument.ticker) ? current : [...current, instrument.ticker]);
               setRemovedTickers((current) => current.filter((ticker) => ticker !== instrument.ticker));
-              setSelectedTicker(instrument.ticker);
+              selectStock(instrument.ticker);
               requestAiSignal(instrument.ticker);
               setQuery("");
             }}>
@@ -644,12 +675,17 @@ export default function App() {
             <span className="selected-company">{selectedQuote?.name ?? selectedTicker}</span>
           </div>
           <div className="chart-toolbar">
-            <div className="period-controls">{periods.map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{item}</button>)}</div>
+            <div className="period-controls">{periods.map((item) => <button key={item} className={period === item ? "active" : ""} onClick={() => { setPeriod(item); setChartCandleCount(110); }}>{item}</button>)}</div>
             <span className="toolbar-divider" />
             <span className="toolbar-action is-active" title="Tampilan candlestick"><Icon name="candles" size={15} /><span>Candles</span></span>
             <button className={`toolbar-action ${showAverages ? "is-active" : ""}`} onClick={() => setShowAverages((value) => !value)}><span className="indicator-glyph">ƒx</span><span>MA</span></button>
             <button className={`toolbar-action ${showVolume ? "is-active" : ""}`} onClick={() => setShowVolume((value) => !value)}><span className="volume-glyph">▥</span><span>Volume</span></button>
             <button className={`toolbar-action ${showRsi ? "is-active" : ""}`} onClick={() => setShowRsi((value) => !value)}><span className="rsi-glyph">RSI</span></button>
+            <span className="toolbar-divider" />
+            <button className="chart-zoom-button" type="button" title="Perbesar chart (scroll ke atas)" aria-label="Perbesar chart" disabled={chartCandleCount <= 20} onClick={() => changeChartZoom("in")}>+</button>
+            <span className="chart-zoom-level" aria-live="polite">{Math.min(chartCandleCount, candles.length)} bar</span>
+            <button className="chart-zoom-button" type="button" title="Perkecil chart (scroll ke bawah)" aria-label="Perkecil chart" disabled={chartCandleCount >= candles.length} onClick={() => changeChartZoom("out")}>−</button>
+            <button className="chart-zoom-reset" type="button" title="Kembalikan zoom chart" onClick={() => setChartCandleCount(110)}>Reset</button>
             <span className="toolbar-divider" />
             <button className={`toolbar-action ${activeTool === "select" ? "is-active" : ""}`} aria-pressed={activeTool === "select"} title="Mode pilih, nonaktifkan alat gambar" onClick={() => selectChartTool("select")}>Pilih</button>
             <button className={`toolbar-action ${activeTool === "trend" ? "is-active" : ""}`} aria-pressed={activeTool === "trend"} title="Gambar trendline: pilih dua titik di chart" onClick={() => selectChartTool(activeTool === "trend" ? "select" : "trend")}><span className="drawing-glyph">／</span><span>Trendline</span></button>
@@ -682,10 +718,10 @@ export default function App() {
 
           <div className="legend-row"><span className="legend-name">{selectedTicker} · {period} · Yahoo Finance</span>{showAverages && <span className="legend-ma"><i /> MA 20 <i className="ma-gold" /> MA 50</span>}<span className="legend-price">Harga {formatPrice(selectedStockData?.price)}</span></div>
           <div className="candles-container">
-            {candles.length ? <CandleChart candles={candles} period={period} showAverages={showAverages} showVolume={showVolume} showRsi={showRsi} drawings={currentDrawings} activeTool={activeTool} pendingPoint={pendingPoint?.ticker === selectedTicker ? pendingPoint : null} aiSignal={selectedAiSignal} onChartClick={handleChartClick} /> : <div className="chart-placeholder">{visibleStockError || "Mengambil chart saham..."}</div>}
+            {candles.length ? <CandleChart candles={candles} period={period} visibleCount={Math.min(chartCandleCount, candles.length)} showAverages={showAverages} showVolume={showVolume} showRsi={showRsi} drawings={currentDrawings} activeTool={activeTool} pendingPoint={pendingPoint?.ticker === selectedTicker ? pendingPoint : null} aiSignal={selectedAiSignal} onChartClick={handleChartClick} onZoom={changeChartZoom} /> : <div className="chart-placeholder">{visibleStockError || "Mengambil chart saham..."}</div>}
           </div>
           <div className="drawing-status" aria-live="polite">{activeTool === "trend" ? pendingPoint?.ticker === selectedTicker ? "Pilih titik akhir trendline" : "Pilih titik awal trendline" : activeTool === "horizontal" ? "Klik chart untuk menambahkan garis harga" : `${currentDrawings.length} anotasi chart · Mode pilih`}</div>
-          <div className="chart-bottom"><span>Data Yahoo Finance dapat tertunda · bukan feed real-time resmi</span><span>{selectedStockData ? `${formatQuoteAge(selectedStockData.quoteTime)} · dicek tiap 10 dtk` : "Menunggu data"}</span></div>
+          <div className="chart-bottom"><span>{candles.length ? `${formatChartDate(candles[Math.max(0, candles.length - Math.min(chartCandleCount, candles.length))]?.time, period)} – ${formatChartDate(candles.at(-1)?.time, period)} · Yahoo Finance` : "Data Yahoo Finance dapat tertunda · bukan feed real-time resmi"}</span><span>{selectedStockData ? `${formatQuoteAge(selectedStockData.quoteTime)} · dicek tiap 10 dtk` : "Menunggu data"}</span></div>
         </section>
 
         <aside className="market-sidepanel">
