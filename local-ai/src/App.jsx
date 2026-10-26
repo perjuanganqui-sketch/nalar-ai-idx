@@ -61,6 +61,20 @@ function formatQuoteAge(timestamp) {
   return `data ${Math.floor(ageSeconds / 3600)} jam tertinggal`;
 }
 
+function formatNewsAge(timestamp) {
+  const ageMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (ageMinutes < 2) return "baru saja";
+  if (ageMinutes < 60) return `${ageMinutes} menit lalu`;
+  if (ageMinutes < 1440) return `${Math.floor(ageMinutes / 60)} jam lalu`;
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
 function formatChartDate(timestamp, period) {
   if (!timestamp) return "—";
   if (period === "1D") return formatTime(timestamp);
@@ -223,6 +237,7 @@ function Icon({ name, size = 16 }) {
     menu: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
     more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
     candles: <><path d="M6 3v18m-3-9h6m6-9v18m-3-13h6" /><rect x="4" y="8" width="4" height="8" /><rect x="13" y="6" width="4" height="5" /></>,
+    news: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /><path d="M3 7v12a2 2 0 0 0 2 2" /></>,
   };
   return <svg {...props}>{paths[name]}</svg>;
 }
@@ -443,6 +458,14 @@ export default function App() {
   const [selectedTicker, setSelectedTicker] = useState("BBRI");
   const [query, setQuery] = useState("");
   const [marketData, setMarketData] = useState(null);
+  const [newsCategory, setNewsCategory] = useState("market");
+  const [news, setNews] = useState([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsError, setNewsError] = useState("");
+  const [newsWarning, setNewsWarning] = useState("");
+  const [newsSearchDraft, setNewsSearchDraft] = useState("");
+  const [newsSearch, setNewsSearch] = useState("");
+  const [newsRefreshVersion, setNewsRefreshVersion] = useState(0);
   const [stockData, setStockData] = useState(null);
   const [marketError, setMarketError] = useState("");
   const [stockError, setStockError] = useState("");
@@ -479,6 +502,7 @@ export default function App() {
   const previousPrices = useRef(new Map());
   const priceFlashTimers = useRef(new Map());
   const signalRequestId = useRef(0);
+  const newsRequestId = useRef(0);
   const quotes = useMemo(() => {
     const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
     if (stockData) stockQuotes.set(stockData.ticker, stockData);
@@ -570,6 +594,43 @@ export default function App() {
     for (const timer of priceFlashTimers.current.values()) window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const requestId = newsRequestId.current + 1;
+    newsRequestId.current = requestId;
+    const params = new URLSearchParams({ category: newsCategory });
+    if (newsCategory === "ticker") params.set("ticker", selectedTicker);
+    if (newsSearch) params.set("q", newsSearch);
+
+    fetch(`/api/news?${params}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await readApiResponse(response);
+        if (!response.ok) throw new Error(data.error || `Berita gagal dimuat (HTTP ${response.status}).`);
+        if (!Array.isArray(data.articles)) throw new Error("Format berita yang diterima tidak valid.");
+        if (requestId === newsRequestId.current) {
+          setNews(data.articles);
+          setNewsError("");
+          setNewsWarning(data.warning || "");
+        }
+      })
+      .catch((error) => {
+        if (requestId === newsRequestId.current) setNewsError(error.message || "Berita gagal dimuat. Coba lagi nanti.");
+      })
+      .finally(() => {
+        if (requestId === newsRequestId.current) setNewsLoading(false);
+      });
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        setNewsLoading(true);
+        setNewsRefreshVersion((version) => version + 1);
+      }
+    }, 5 * 60_000);
+    return () => {
+      window.clearInterval(interval);
+      newsRequestId.current += 1;
+    };
+  }, [newsCategory, newsSearch, newsRefreshVersion, selectedTicker]);
+
   function changeChartZoom(direction) {
     const maximum = Math.max(20, candles.length);
     const next = direction === "in"
@@ -581,6 +642,7 @@ export default function App() {
   }
 
   function selectStock(ticker) {
+    if (ticker !== selectedTicker && newsCategory === "ticker") setNewsLoading(true);
     setSelectedTicker(ticker);
     setChartCandleCount(110);
     setChartOffset(0);
@@ -588,6 +650,11 @@ export default function App() {
 
   function refreshData() {
     setRefreshVersion((version) => version + 1);
+  }
+
+  function refreshNews() {
+    setNewsLoading(true);
+    setNewsRefreshVersion((version) => version + 1);
   }
 
   function focusAnalysis() {
@@ -778,7 +845,7 @@ export default function App() {
 
       <div className="terminal-layout">
         <nav className="terminal-rail" aria-label="Menu">
-          {[["Watchlist", "grid"], ["Chart", "chart"], ["Analisis", "spark"]].map(([label, icon]) => <button className={`rail-button ${activeNavigation === label ? "selected" : ""}`} aria-pressed={activeNavigation === label} key={label} title={label} onClick={() => { if (label === "Analisis") focusAnalysis(); else { setActiveNavigation(label); document.querySelector(label === "Chart" ? ".chart-workspace" : ".watchlist-panel")?.scrollIntoView({ behavior: "smooth" }); } }}><Icon name={icon} size={17} /><span>{label}</span></button>)}
+          {[["Watchlist", "grid"], ["Chart", "chart"], ["Berita", "news"], ["Analisis", "spark"]].map(([label, icon]) => <button className={`rail-button ${activeNavigation === label ? "selected" : ""}`} aria-pressed={activeNavigation === label} key={label} title={label} onClick={() => { if (label === "Analisis") focusAnalysis(); else { setActiveNavigation(label); document.querySelector(label === "Chart" ? ".chart-workspace" : label === "Berita" ? ".news-panel" : ".watchlist-panel")?.scrollIntoView({ behavior: "smooth" }); } }}><Icon name={icon} size={17} /><span>{label}</span></button>)}
           <div className="rail-spacer" />
           <span className="rail-caption">Data dapat tertunda · Bukan rekomendasi investasi</span>
         </nav>
@@ -886,6 +953,37 @@ export default function App() {
               <span>Low <b className="negative">{formatPrice(selectedStockData?.dayLow ?? selectedQuote?.dayLow)}</b></span><span>Avg <b>—</b></span>
             </div>
             <div className="market-source-line"><i /> Yahoo Finance · {formatQuoteAge(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} · {formatTime(selectedStockData?.quoteTime ?? selectedQuote?.quoteTime)} WIB</div>
+          </section>
+
+          <section className="news-panel" aria-label="Berita pasar Indonesia">
+            <div className="news-heading">
+              <div><strong>Berita Indonesia</strong><small>Google News · pembaruan berkala</small></div>
+              <button type="button" title="Perbarui berita" aria-label="Perbarui berita" onClick={refreshNews} disabled={newsLoading}><Icon name="refresh" size={14} /></button>
+            </div>
+            <div className="news-categories" role="group" aria-label="Kategori berita">
+              {[["market", "Pasar"], ["economy", "Ekonomi"], ["business", "Bisnis"], ["ticker", "Emiten"]].map(([category, label]) => (
+                <button type="button" key={category} className={newsCategory === category ? "active" : ""} aria-pressed={newsCategory === category} onClick={() => { if (newsCategory !== category) setNewsLoading(true); setNewsCategory(category); }}>{label}</button>
+              ))}
+            </div>
+            <form className="news-search" onSubmit={(event) => { event.preventDefault(); const nextSearch = newsSearchDraft.trim(); if (nextSearch !== newsSearch) setNewsLoading(true); setNewsSearch(nextSearch); }}>
+              <Icon name="search" size={13} />
+              <input value={newsSearchDraft} onChange={(event) => setNewsSearchDraft(event.target.value)} maxLength={80} placeholder={newsCategory === "ticker" ? `Cari berita ${selectedTicker}...` : "Cari topik berita..."} aria-label="Cari berita" />
+              <button type="submit" disabled={newsLoading}>Cari</button>
+            </form>
+            {newsCategory === "ticker" && <div className="news-ticker-filter">Emiten aktif: <strong>{selectedTicker}</strong></div>}
+            {newsWarning && <p className="news-state news-warning" role="status">{newsWarning}</p>}
+            {newsError && <p className="news-state news-error" role="alert">{newsError}</p>}
+            {!news.length && newsLoading && <p className="news-state">Mengambil berita terbaru…</p>}
+            {!news.length && !newsLoading && !newsError && <p className="news-state">Belum ada berita untuk ditampilkan.</p>}
+            {news.length > 0 && <div className="news-list">
+              {news.slice(0, 12).map((article) => (
+                <article className="news-item" key={article.id}>
+                  <a href={article.link} target="_blank" rel="noopener noreferrer">{article.title}</a>
+                  <div><span>{article.source}</span><time dateTime={new Date(article.publishedAt).toISOString()}>{formatNewsAge(article.publishedAt)}</time></div>
+                </article>
+              ))}
+            </div>}
+            <p className="news-disclaimer">Waktu terbit mengikuti sumber. Feed dapat terlambat dan bukan real-time terjamin.</p>
           </section>
 
           <section className="scalping-panel" aria-label="Meja scalping dan analisis teknikal">

@@ -112,9 +112,94 @@ const marketCache = new Map();
 const marketRequests = new Map();
 const signalCache = new Map();
 const signalRequests = new Map();
+const newsCache = new Map();
+const newsRequests = new Map();
 const marketCacheTtl = 10_000;
 const signalCacheTtl = 30_000;
+const newsCacheTtl = 5 * 60_000;
 let latestMarketData;
+
+const newsCategories = {
+  market: "saham Indonesia OR IHSG OR BEI OR bursa saham Indonesia",
+  economy: "ekonomi Indonesia OR Bank Indonesia OR rupiah OR inflasi Indonesia",
+  business: "bisnis Indonesia OR perusahaan Indonesia OR investasi Indonesia",
+  ticker: "saham Indonesia",
+};
+
+function decodeXml(value) {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (entity, code) => {
+      if (code.toLowerCase() === "amp") return "&";
+      if (code.toLowerCase() === "quot") return "\"";
+      if (code.toLowerCase() === "apos") return "'";
+      if (code.toLowerCase() === "lt") return "<";
+      if (code.toLowerCase() === "gt") return ">";
+      const numeric = code[1].toLowerCase() === "x"
+        ? Number.parseInt(code.slice(2), 16)
+        : Number.parseInt(code.slice(1), 10);
+      return Number.isInteger(numeric) && numeric >= 0 && numeric <= 0x10ffff
+        && !(numeric >= 0xd800 && numeric <= 0xdfff)
+        ? String.fromCodePoint(numeric)
+        : "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function readRssTag(item, tag) {
+  const match = item.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match ? decodeXml(match[1]) : "";
+}
+
+function parseNewsFeed(xml) {
+  return [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
+    .map(([, item]) => {
+      const title = readRssTag(item, "title");
+      const link = readRssTag(item, "link");
+      const publishedAt = Date.parse(readRssTag(item, "pubDate"));
+      const source = readRssTag(item, "source");
+      if (!title || !Number.isFinite(publishedAt)) return null;
+      let articleUrl;
+      try {
+        articleUrl = new URL(link);
+      } catch {
+        return null;
+      }
+      if (!["http:", "https:"].includes(articleUrl.protocol)) return null;
+      return {
+        id: articleUrl.href,
+        title,
+        link: articleUrl.href,
+        source: source || articleUrl.hostname.replace(/^www\./, ""),
+        publishedAt,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.publishedAt - left.publishedAt)
+    .slice(0, 30);
+}
+
+async function readNewsResponse(response) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Respons RSS tidak memiliki isi.");
+
+  const decoder = new TextDecoder();
+  let size = 0;
+  let xml = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 1_000_000) {
+      await reader.cancel();
+      throw new Error("RSS berita melebihi batas ukuran yang diizinkan.");
+    }
+    xml += decoder.decode(value, { stream: true });
+  }
+  return xml + decoder.decode();
+}
 
 app.use(cors({
   origin: ["http://localhost:5173", "http://nalar.localhost:5173"],
@@ -268,6 +353,69 @@ async function loadStockChart(ticker, rangeKey) {
     fetchedAt: Date.now(),
   };
 }
+
+app.get("/api/news", async (req, res) => {
+  const category = String(req.query.category ?? "market");
+  const ticker = String(req.query.ticker ?? "").toUpperCase();
+  const search = String(req.query.q ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80);
+  if (!Object.hasOwn(newsCategories, category)) {
+    return res.status(400).json({ error: "Kategori berita tidak valid." });
+  }
+  if (ticker && ticker !== indexInstrument.ticker && !marketInstruments.some((instrument) => instrument.ticker === ticker)) {
+    return res.status(400).json({ error: "Ticker berita tidak tersedia." });
+  }
+
+  const terms = category === "ticker" && ticker
+    ? `"${ticker}" saham Indonesia`
+    : newsCategories[category];
+  const query = [terms, ticker && category !== "ticker" ? ticker : "", search]
+    .filter(Boolean)
+    .join(" ");
+  const cacheKey = `${category}:${ticker}:${search.toLowerCase()}`;
+  const cached = newsCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < newsCacheTtl) {
+    return res.json(cached);
+  }
+
+  let newsRequest = newsRequests.get(cacheKey);
+  if (!newsRequest) {
+    newsRequest = (async () => {
+      const feedUrl = new URL("https://news.google.com/rss/search");
+      feedUrl.search = new URLSearchParams({ q: query, hl: "id", gl: "ID", ceid: "ID:id" });
+      const response = await fetch(feedUrl, {
+        headers: { "User-Agent": "NalarMarketNews/1.0 (+https://nalar-ai-idx.vercel.app)" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`Google News RSS merespons HTTP ${response.status}.`);
+      const xml = await readNewsResponse(response);
+      const articles = parseNewsFeed(xml);
+      if (!articles.length) throw new Error("RSS tidak berisi berita valid.");
+      const result = {
+        articles,
+        category,
+        ticker: ticker || null,
+        provider: "Google News RSS",
+        fetchedAt: Date.now(),
+      };
+      newsCache.set(cacheKey, result);
+      if (newsCache.size > 100) newsCache.delete(newsCache.keys().next().value);
+      return result;
+    })();
+    newsRequests.set(cacheKey, newsRequest);
+  }
+
+  try {
+    return res.json(await newsRequest);
+  } catch (error) {
+    console.error("Market news error:", error.message);
+    if (cached) {
+      return res.json({ ...cached, stale: true, warning: "Berita belum berhasil diperbarui; menampilkan hasil tersimpan." });
+    }
+    return res.status(502).json({ error: "Berita belum dapat dimuat. Coba perbarui beberapa saat lagi." });
+  } finally {
+    if (newsRequests.get(cacheKey) === newsRequest) newsRequests.delete(cacheKey);
+  }
+});
 
 app.get("/api/market", async (req, res) => {
   const rangeKey = String(req.query.range ?? "1M");
