@@ -4,6 +4,12 @@ import "./App.css";
 const periods = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "All"];
 const marketPollInterval = 10_000;
 const emptyArray = [];
+const sessionDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Jakarta",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 const popularQuestions = [
   "Ringkas kondisi saham ini",
   "Apa risiko yang perlu diperhatikan?",
@@ -67,7 +73,7 @@ function formatChartDate(timestamp, period) {
 }
 
 function getTechnicalSnapshot(candles) {
-  if (!candles.length) return null;
+  if (candles.length < 26) return null;
   const latest = candles.at(-1);
   const recent = candles.slice(-20);
   const recentCandles = candles.slice(-15);
@@ -86,18 +92,87 @@ function getTechnicalSnapshot(candles) {
     ? (recentVolumes.reduce((total, volume) => total + volume, 0) / recentVolumes.length)
       / (baselineVolumes.reduce((total, volume) => total + volume, 0) / baselineVolumes.length || 1)
     : null;
-  const ema9 = candles.slice(0, 9).reduce((average, candle) => average + candle.close, 0) / Math.min(candles.length, 9);
-  const emaMultiplier = 2 / 10;
-  const ema = candles.slice(9).reduce((average, candle) => ((candle.close - average) * emaMultiplier) + average, ema9);
+  const closes = candles.map((candle) => candle.close);
+  const ema9 = calculateEma(closes, 9).at(-1);
+  const ema20 = calculateEma(closes, 20).at(-1);
+  const ema12 = calculateEma(closes, 12);
+  const ema26 = calculateEma(closes, 26);
+  const macdLine = ema12.map((value, index) => (
+    Number.isFinite(value) && Number.isFinite(ema26[index]) ? value - ema26[index] : null
+  ));
+  const validMacd = macdLine.filter(Number.isFinite);
+  const macdSignal = calculateEma(validMacd, 9).at(-1);
+  const macd = validMacd.at(-1);
+  const stochasticValues = candles.map((candle, index) => {
+    const window = candles.slice(Math.max(0, index - 13), index + 1);
+    const highest = Math.max(...window.map((item) => item.high));
+    const lowest = Math.min(...window.map((item) => item.low));
+    return highest === lowest ? 50 : ((candle.close - lowest) / (highest - lowest)) * 100;
+  });
+  const stochastic = stochasticValues.at(-1);
+  const stochasticSignal = stochasticValues.slice(-3).reduce((total, value) => total + value, 0) / Math.min(3, stochasticValues.length);
+  const sessionDate = sessionDateFormatter.format(latest.time);
+  const sessionCandles = candles.filter((candle) => (
+    sessionDateFormatter.format(candle.time) === sessionDate
+  ));
+  const vwapInputs = sessionCandles.filter((candle) => Number.isFinite(candle.volume) && candle.volume > 0);
+  const volumeTotal = vwapInputs.reduce((total, candle) => total + candle.volume, 0);
+  const vwap = volumeTotal
+    ? vwapInputs.reduce((total, candle) => total + ((candle.high + candle.low + candle.close) / 3) * candle.volume, 0) / volumeTotal
+    : null;
   return {
     rsi,
     atr,
     volumeRatio,
     support: Math.min(...recent.map((candle) => candle.low)),
     resistance: Math.max(...recent.map((candle) => candle.high)),
-    ema9: ema,
+    ema9,
+    ema20,
+    macd,
+    macdSignal,
+    macdHistogram: Number.isFinite(macd) && Number.isFinite(macdSignal) ? macd - macdSignal : null,
+    stochastic,
+    stochasticSignal,
+    vwap,
     lastMove: latest.close - latest.open,
+    close: latest.close,
   };
+}
+
+function calculateEma(values, period) {
+  const result = Array(values.length).fill(null);
+  if (values.length < period) return result;
+  const multiplier = 2 / (period + 1);
+  let average = values.slice(0, period).reduce((total, value) => total + value, 0) / period;
+  result[period - 1] = average;
+  for (let index = period; index < values.length; index += 1) {
+    average += (values[index] - average) * multiplier;
+    result[index] = average;
+  }
+  return result;
+}
+
+function getLocalTechnicalSignal(snapshot) {
+  if (!snapshot || !Number.isFinite(snapshot.macdHistogram)) {
+    return { signal: "WAIT", rationale: "Data candle belum cukup untuk menghitung indikator teknikal." };
+  }
+
+  const checks = [
+    { name: "EMA 9/20", bullish: snapshot.ema9 > snapshot.ema20, bearish: snapshot.ema9 < snapshot.ema20 },
+    { name: "MACD", bullish: snapshot.macdHistogram > 0, bearish: snapshot.macdHistogram < 0 },
+    { name: "RSI", bullish: snapshot.rsi >= 52 && snapshot.rsi < 70, bearish: snapshot.rsi <= 48 && snapshot.rsi > 30 },
+    { name: "VWAP", bullish: Number.isFinite(snapshot.vwap) && snapshot.close > snapshot.vwap, bearish: Number.isFinite(snapshot.vwap) && snapshot.close < snapshot.vwap },
+    { name: "Stochastic", bullish: snapshot.stochastic > snapshot.stochasticSignal && snapshot.stochastic < 80, bearish: snapshot.stochastic < snapshot.stochasticSignal && snapshot.stochastic > 20 },
+  ];
+  const bullish = checks.filter((check) => check.bullish);
+  const bearish = checks.filter((check) => check.bearish);
+  if (bullish.length >= 3 && bullish.length - bearish.length >= 2) {
+    return { signal: "BUY", rationale: `${bullish.length}/5 indikator mendukung momentum naik: ${bullish.map((check) => check.name).join(", ")}.` };
+  }
+  if (bearish.length >= 3 && bearish.length - bullish.length >= 2) {
+    return { signal: "SELL", rationale: `${bearish.length}/5 indikator mendukung momentum turun: ${bearish.map((check) => check.name).join(", ")}.` };
+  }
+  return { signal: "WAIT", rationale: `Indikator belum searah (naik ${bullish.length}/5, turun ${bearish.length}/5); tunggu konfirmasi.` };
 }
 
 function pathFor(values, width, height, padding = 0) {
@@ -176,7 +251,7 @@ function Sparkline({ values, positive }) {
   return <svg className={`watch-spark ${positive ? "up" : "down"}`} viewBox="0 0 76 24" aria-hidden="true"><path d={path} /></svg>;
 }
 
-function CandleChart({ candles, period, visibleCount, offset, showAverages, showVolume, showRsi, drawings, activeTool, pendingPoint, aiSignal, onChartClick, onZoom, onPan }) {
+function CandleChart({ candles, period, visibleCount, offset, showAverages, showVolume, showRsi, drawings, activeTool, pendingPoint, signal, onChartClick, onZoom, onPan }) {
   const chartRef = useRef(null);
   const dragRef = useRef(null);
   const draggedRef = useRef(false);
@@ -335,16 +410,16 @@ function CandleChart({ candles, period, visibleCount, offset, showAverages, show
       {ma20 && <path d={ma20} className="ma-line ma-20" />}
       {ma50 && <path d={ma50} className="ma-line ma-50" />}
       <line x1={left} x2={chartWidth - right} y1={yFor(visible.at(-1).close)} y2={yFor(visible.at(-1).close)} className="price-guide" />
-      {offset === 0 && aiSignal && ["BUY", "SELL"].includes(aiSignal.signal) && (() => {
-        const isBuy = aiSignal.signal === "BUY";
+      {offset === 0 && signal && ["BUY", "SELL"].includes(signal.signal) && (() => {
+        const isBuy = signal.signal === "BUY";
         const point = visible.at(-1);
         const markerY = Math.max(plotTop + 14, Math.min(plotBottom - 14, isBuy ? yFor(point.low) + 20 : yFor(point.high) - 20));
         const arrowPath = isBuy
           ? "M 0 -12 L 10 -2 L 5 -2 L 5 10 L -5 10 L -5 -2 L -10 -2 Z"
           : "M 0 12 L 10 2 L 5 2 L 5 -10 L -5 -10 L -5 2 L -10 2 Z";
-        return <g className={`trade-marker ai-trade-marker ${isBuy ? "buy-marker" : "sell-marker"}`} transform={`translate(${xFor(visible.length - 1)} ${markerY})`} aria-label={`Sinyal AI ${aiSignal.signal}`}>
+        return <g className={`trade-marker local-trade-marker ${isBuy ? "buy-marker" : "sell-marker"}`} transform={`translate(${xFor(visible.length - 1)} ${markerY})`} aria-label={`Sinyal teknikal lokal ${signal.signal}`}>
           <path d={arrowPath} />
-          <text x="13" y="4">AI {aiSignal.signal}</text>
+          <text x="13" y="4">RULE {signal.signal}</text>
         </g>;
       })()}
       {drawings.map((drawing) => {
@@ -372,10 +447,10 @@ export default function App() {
   const [marketError, setMarketError] = useState("");
   const [stockError, setStockError] = useState("");
   const [stockErrorTicker, setStockErrorTicker] = useState("");
-  const [aiSignal, setAiSignal] = useState(null);
-  const [aiSignalError, setAiSignalError] = useState("");
-  const [aiSignalErrorTicker, setAiSignalErrorTicker] = useState("");
-  const [aiSignalLoadingTicker, setAiSignalLoadingTicker] = useState("");
+  const [localSignal, setLocalSignal] = useState(null);
+  const [localSignalError, setLocalSignalError] = useState("");
+  const [localSignalErrorTicker, setLocalSignalErrorTicker] = useState("");
+  const [localSignalLoadingTicker, setLocalSignalLoadingTicker] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [favoriteTickers, setFavoriteTickers] = useState([]);
@@ -403,7 +478,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const previousPrices = useRef(new Map());
   const priceFlashTimers = useRef(new Map());
-  const aiSignalRequestId = useRef(0);
+  const signalRequestId = useRef(0);
   const quotes = useMemo(() => {
     const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
     if (stockData) stockQuotes.set(stockData.ticker, stockData);
@@ -435,8 +510,8 @@ export default function App() {
   const selectedStockData = stockData?.ticker === selectedTicker ? stockData : null;
   const selectedQuote = quotes.find((quote) => quote.ticker === selectedTicker) ?? selectedStockData;
   const candles = selectedStockData?.range === period ? selectedStockData.chart : emptyArray;
-  const selectedAiSignal = aiSignal?.ticker === selectedTicker ? aiSignal : null;
-  const visibleAiSignalError = aiSignalErrorTicker === selectedTicker ? aiSignalError : "";
+  const selectedLocalSignal = localSignal?.ticker === selectedTicker ? localSignal : null;
+  const visibleLocalSignalError = localSignalErrorTicker === selectedTicker ? localSignalError : "";
   const visibleStockError = stockErrorTicker === selectedTicker ? stockError : "";
   const latestCandle = candles.at(-1);
   const technicalSnapshot = useMemo(() => getTechnicalSnapshot(candles), [candles]);
@@ -528,36 +603,38 @@ export default function App() {
     ));
   }
 
-  async function requestAiSignal(ticker) {
-    const requestId = aiSignalRequestId.current + 1;
-    aiSignalRequestId.current = requestId;
-    setAiSignalLoadingTicker(ticker);
-    setAiSignalError("");
-    setAiSignalErrorTicker("");
+  async function requestTechnicalSignal(ticker) {
+    const requestId = signalRequestId.current + 1;
+    signalRequestId.current = requestId;
+    setLocalSignalLoadingTicker(ticker);
+    setLocalSignalError("");
+    setLocalSignalErrorTicker("");
     try {
-      const response = await fetch(`/api/market/signals/${ticker}`, { cache: "no-store" });
+      const response = await fetch(`/api/market/stocks/${ticker}?range=5D`, { cache: "no-store" });
       const data = await readApiResponse(response);
-      if (!response.ok) throw new Error(data.error || `Analisis AI gagal (HTTP ${response.status}).`);
-      if (
-        data.ticker !== ticker
-        || !["BUY", "SELL", "WAIT"].includes(data.signal)
-        || typeof data.rationale !== "string"
-        || !Number.isFinite(data.confidence)
-      ) {
-        throw new Error("Respons sinyal AI tidak lengkap.");
+      if (!response.ok) throw new Error(data.error || `Data chart tidak tersedia (HTTP ${response.status}).`);
+      if (data.ticker !== ticker || !Array.isArray(data.chart)) {
+        throw new Error("Data chart untuk analisis belum lengkap.");
       }
-      if (requestId === aiSignalRequestId.current) {
-        setAiSignal(data);
-        setAiSignalError("");
-        setAiSignalErrorTicker("");
+      const snapshot = getTechnicalSnapshot(data.chart);
+      const analysis = getLocalTechnicalSignal(snapshot);
+      if (requestId === signalRequestId.current) {
+        setLocalSignal({
+          ticker,
+          ...analysis,
+          provider: "Analisis teknikal lokal",
+          quoteTime: data.quoteTime,
+        });
+        setLocalSignalError("");
+        setLocalSignalErrorTicker("");
       }
-    } catch {
-      if (requestId === aiSignalRequestId.current) {
-        setAiSignalError("Analisis belum tersedia. Coba lagi beberapa saat.");
-        setAiSignalErrorTicker(ticker);
+    } catch (error) {
+      if (requestId === signalRequestId.current) {
+        setLocalSignalError(error.message || "Data analisis belum tersedia. Coba lagi nanti.");
+        setLocalSignalErrorTicker(ticker);
       }
     } finally {
-      if (requestId === aiSignalRequestId.current) setAiSignalLoadingTicker("");
+      if (requestId === signalRequestId.current) setLocalSignalLoadingTicker("");
     }
   }
 
@@ -720,7 +797,7 @@ export default function App() {
           <label className="watchlist-search"><Icon name="search" size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari ticker..." /></label>
           <div className="watchlist-columns"><span>INSTRUMEN</span><span>HARGA / PERUBAHAN</span></div>
           <div className="watchlist-scroll">
-            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan minta analisis sinyal AI`} onClick={() => { selectStock(quote.ticker); requestAiSignal(quote.ticker); }}>
+            {visibleQuotes.map((quote) => <button key={quote.ticker} className={`watch-row ${selectedTicker === quote.ticker ? "active" : ""}`} title={`Pilih ${quote.ticker} dan hitung sinyal teknikal lokal`} onClick={() => { selectStock(quote.ticker); requestTechnicalSignal(quote.ticker); }}>
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
@@ -731,7 +808,7 @@ export default function App() {
               setAddedTickers((current) => current.includes(instrument.ticker) ? current : [...current, instrument.ticker]);
               setRemovedTickers((current) => current.filter((ticker) => ticker !== instrument.ticker));
               selectStock(instrument.ticker);
-              requestAiSignal(instrument.ticker);
+              requestTechnicalSignal(instrument.ticker);
               setQuery("");
             }}>
               <SymbolLogo ticker={instrument.ticker} color={instrument.color} />
@@ -774,10 +851,10 @@ export default function App() {
 
           {marketError && <div className="inline-error" role="status">{marketError}</div>}
           {visibleStockError && !selectedStockData && <div className="inline-error" role="alert">{visibleStockError}</div>}
-          <div className={`ai-signal-banner ${selectedAiSignal ? `signal-${selectedAiSignal.signal.toLowerCase()}` : ""}`} role="status">
-            <strong>{selectedAiSignal ? `AI ${selectedAiSignal.signal}` : aiSignalLoadingTicker === selectedTicker ? "AI sedang menganalisis..." : visibleAiSignalError ? "Analisis tertunda" : "Sinyal AI"}</strong>
-            <span>{selectedAiSignal ? `${selectedAiSignal.rationale} · keyakinan ${selectedAiSignal.confidence}%` : aiSignalLoadingTicker === selectedTicker ? `Menganalisis ${selectedTicker} berdasarkan data teknikal.` : visibleAiSignalError || `Klik emiten di watchlist untuk meminta analisis ${selectedTicker}.`}</span>
-            <small>{selectedAiSignal ? `Sumber ${selectedAiSignal.provider}, data ${formatTime(selectedAiSignal.quoteTime)} WIB · dapat tertunda · bukan rekomendasi personal` : "Data sumber mungkin tertunda; sinyal bukan rekomendasi personal."}</small>
+          <div className={`technical-signal-banner ${selectedLocalSignal ? `signal-${selectedLocalSignal.signal.toLowerCase()}` : ""}`} role="status">
+            <strong>{selectedLocalSignal ? `RULE ${selectedLocalSignal.signal}` : localSignalLoadingTicker === selectedTicker ? "Menghitung sinyal lokal..." : visibleLocalSignalError ? "Analisis tertunda" : "Sinyal teknikal lokal"}</strong>
+            <span>{selectedLocalSignal ? selectedLocalSignal.rationale : localSignalLoadingTicker === selectedTicker ? `Menghitung indikator teknikal ${selectedTicker} di perangkat ini.` : visibleLocalSignalError || `Klik emiten untuk menghitung sinyal teknikal ${selectedTicker}.`}</span>
+            <small>{selectedLocalSignal ? `5 indikator teknikal · ${selectedLocalSignal.provider} · data ${formatTime(selectedLocalSignal.quoteTime)} WIB · bukan rekomendasi personal` : "Berbasis aturan indikator lokal, bukan AI; data pasar dapat tertunda."}</small>
           </div>
 
           <div className="chart-heading">
@@ -793,7 +870,7 @@ export default function App() {
 
           <div className="legend-row"><span className="legend-name">{selectedTicker} · {period} · Yahoo Finance</span>{showAverages && <span className="legend-ma"><i /> MA 20 <i className="ma-gold" /> MA 50</span>}<span className="legend-price">Harga {formatPrice(selectedStockData?.price)}</span></div>
           <div className="candles-container">
-            {candles.length ? <CandleChart candles={candles} period={period} visibleCount={Math.min(chartCandleCount, candles.length)} offset={chartOffset} showAverages={showAverages} showVolume={showVolume} showRsi={showRsi} drawings={currentDrawings} activeTool={activeTool} pendingPoint={pendingPoint?.ticker === selectedTicker ? pendingPoint : null} aiSignal={selectedAiSignal} onChartClick={handleChartClick} onZoom={changeChartZoom} onPan={(offset) => setChartOffset(Math.max(0, Math.min(offset, Math.max(0, candles.length - Math.min(chartCandleCount, candles.length)))))} /> : <div className="chart-placeholder">{visibleStockError || "Mengambil chart saham..."}</div>}
+            {candles.length ? <CandleChart candles={candles} period={period} visibleCount={Math.min(chartCandleCount, candles.length)} offset={chartOffset} showAverages={showAverages} showVolume={showVolume} showRsi={showRsi} drawings={currentDrawings} activeTool={activeTool} pendingPoint={pendingPoint?.ticker === selectedTicker ? pendingPoint : null} signal={selectedLocalSignal} onChartClick={handleChartClick} onZoom={changeChartZoom} onPan={(offset) => setChartOffset(Math.max(0, Math.min(offset, Math.max(0, candles.length - Math.min(chartCandleCount, candles.length)))))} /> : <div className="chart-placeholder">{visibleStockError || "Mengambil chart saham..."}</div>}
           </div>
           <div className="drawing-status" aria-live="polite">{activeTool === "trend" ? pendingPoint?.ticker === selectedTicker ? "Pilih titik akhir trendline" : "Pilih titik awal trendline" : activeTool === "horizontal" ? "Klik chart untuk menambahkan garis harga" : `${currentDrawings.length} anotasi chart · Tarik chart untuk geser`}</div>
           <div className="chart-bottom"><span>{candles.length ? `${formatChartDate(candles[Math.max(0, candles.length - chartOffset - Math.min(chartCandleCount, candles.length))]?.time, period)} – ${formatChartDate(candles[Math.max(0, candles.length - chartOffset - 1)]?.time, period)} · Yahoo Finance` : "Data Yahoo Finance dapat tertunda · bukan feed real-time resmi"}</span><span>{selectedStockData ? `${formatQuoteAge(selectedStockData.quoteTime)} · dicek tiap 10 dtk` : "Menunggu data"}</span></div>
@@ -818,12 +895,15 @@ export default function App() {
               <div><span>ATR 14</span><strong>{formatPrice(technicalSnapshot?.atr)}</strong><small>Rentang rata-rata</small></div>
               <div><span>Volume relatif</span><strong>{Number.isFinite(technicalSnapshot?.volumeRatio) ? `${technicalSnapshot.volumeRatio.toFixed(2)}×` : "—"}</strong><small>3 candle vs 12 sebelumnya</small></div>
               <div><span>EMA 9</span><strong>{formatPrice(technicalSnapshot?.ema9)}</strong><small>{Number.isFinite(entryPrice) && technicalSnapshot ? entryPrice >= technicalSnapshot.ema9 ? "Harga di atas EMA" : "Harga di bawah EMA" : "Menunggu data"}</small></div>
+              <div><span>MACD histogram</span><strong className={technicalSnapshot?.macdHistogram > 0 ? "positive" : technicalSnapshot?.macdHistogram < 0 ? "negative" : ""}>{formatPrice(technicalSnapshot?.macdHistogram)}</strong><small>{Number.isFinite(technicalSnapshot?.macdHistogram) ? technicalSnapshot.macdHistogram > 0 ? "Momentum naik" : technicalSnapshot.macdHistogram < 0 ? "Momentum turun" : "Netral" : "Data belum cukup"}</small></div>
+              <div><span>Stochastic %K</span><strong className={technicalSnapshot?.stochastic >= 80 ? "negative" : technicalSnapshot?.stochastic <= 20 ? "positive" : ""}>{Number.isFinite(technicalSnapshot?.stochastic) ? technicalSnapshot.stochastic.toFixed(1) : "—"}</strong><small>{Number.isFinite(technicalSnapshot?.stochasticSignal) ? `%D ${technicalSnapshot.stochasticSignal.toFixed(1)}` : "Data belum cukup"}</small></div>
+              <div><span>VWAP sesi</span><strong>{formatPrice(technicalSnapshot?.vwap)}</strong><small>{Number.isFinite(entryPrice) && Number.isFinite(technicalSnapshot?.vwap) ? entryPrice >= technicalSnapshot.vwap ? "Harga di atas VWAP" : "Harga di bawah VWAP" : "Volume belum tersedia"}</small></div>
             </div>
             <div className="scalp-levels">
               <span>Support 20 bar <b>{formatPrice(technicalSnapshot?.support)}</b></span>
               <span>Resistance 20 bar <b>{formatPrice(technicalSnapshot?.resistance)}</b></span>
             </div>
-            <p className="scalp-note">{candles.length ? `${candles.length} candle · ${period} · level dan indikator dihitung dari data chart.` : "Menunggu data chart untuk menghitung indikator."}</p>
+            <p className="scalp-note">{candles.length ? `${candles.length} candle · ${period} · MACD, stochastic, VWAP, dan level dihitung dari chart; sinyal lokal memakai 5D.` : "Menunggu data chart untuk menghitung indikator."}</p>
 
             <div className="risk-heading"><strong>Kalkulator posisi</strong><small>Ukuran lot dibulatkan ke bawah (1 lot = 100 saham)</small></div>
             <div className="risk-input-grid">

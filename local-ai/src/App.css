@@ -258,17 +258,17 @@ button { font: inherit; }
 .buy-marker text,.toolbar-action.buy-tool { fill: #00d28b; color: #00d28b; }
 .sell-marker path { fill: #f04452; stroke: #ffc4c8; }
 .sell-marker text,.toolbar-action.sell-tool { fill: #ff6671; color: #ff6671; }
-.ai-trade-marker text { font-size: 12px; }
-.ai-signal-banner { min-height: 43px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 2px 9px; padding: 5px 12px; border-bottom: 1px solid #303238; background: #202226; }
-.ai-signal-banner > strong { grid-row: span 2; color: #b9aaff; font-size: 11px; white-space: nowrap; }
-.ai-signal-banner > span { overflow: hidden; color: #d0d3da; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.ai-signal-banner > small { overflow: hidden; color: #858b96; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.ai-signal-banner.signal-buy { border-left: 3px solid #00c982; }
-.ai-signal-banner.signal-buy > strong { color: #00d28b; }
-.ai-signal-banner.signal-sell { border-left: 3px solid #f04452; }
-.ai-signal-banner.signal-sell > strong { color: #ff6671; }
-.ai-signal-banner.signal-wait { border-left: 3px solid #d4a94f; }
-.ai-signal-banner.signal-wait > strong { color: #e3bd65; }
+.local-trade-marker text { font-size: 12px; }
+.technical-signal-banner { min-height: 43px; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 2px 9px; padding: 5px 12px; border-bottom: 1px solid #303238; background: #202226; }
+.technical-signal-banner > strong { grid-row: span 2; color: #b9aaff; font-size: 11px; white-space: nowrap; }
+.technical-signal-banner > span { overflow: hidden; color: #d0d3da; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.technical-signal-banner > small { overflow: hidden; color: #858b96; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.technical-signal-banner.signal-buy { border-left: 3px solid #00c982; }
+.technical-signal-banner.signal-buy > strong { color: #00d28b; }
+.technical-signal-banner.signal-sell { border-left: 3px solid #f04452; }
+.technical-signal-banner.signal-sell > strong { color: #ff6671; }
+.technical-signal-banner.signal-wait { border-left: 3px solid #d4a94f; }
+.technical-signal-banner.signal-wait > strong { color: #e3bd65; }
 @media (max-width: 1200px) { .terminal-layout { grid-template-columns: 43px 230px minmax(360px,1fr) 290px; }.watch-spark { width: 36px; flex-basis: 36px; }.watch-row { gap: 5px; padding-right: 6px; padding-left: 6px; }.chart-ohlc { gap: 5px; }.chart-ohlc > span { font-size: 7px; }.chart-toolbar { gap: 4px; }.toolbar-action { padding-right: 4px; padding-left: 4px; } }
 @media (max-width: 950px) { .terminal-layout { grid-template-columns: 42px 205px minmax(320px,1fr); }.market-sidepanel { display: none; }.active-symbol > span:not(.symbol-logo) { max-width: 140px; }.connection-indicator { display: none; } }
 @media (max-width: 680px) {
@@ -470,7 +470,7 @@ button { font: inherit; }
 .chart-bottom { min-height: 27px; padding: 5px 13px; border-color: var(--terminal-border); color: #8995a0; font-size: 9px; }
 .inline-error { padding: 7px 13px; border-color: #684246; color: #ffc0c4; background: #352326; font-size: 10px; }
 
-.ai-signal-banner {
+.technical-signal-banner {
   min-height: 48px;
   gap: 3px 11px;
   padding: 7px 14px;
@@ -478,12 +478,12 @@ button { font: inherit; }
   background: linear-gradient(105deg,#1b2028,#1a2023);
   animation: panel-enter .28s var(--terminal-ease) both;
 }
-.ai-signal-banner > strong { font-size: 12px; }
-.ai-signal-banner > span { font-size: 10px; }
-.ai-signal-banner > small { font-size: 9px; }
-.ai-signal-banner.signal-buy { background: linear-gradient(105deg,#17352d,#1b2425); }
-.ai-signal-banner.signal-sell { background: linear-gradient(105deg,#382326,#242124); }
-.ai-signal-banner.signal-wait { background: linear-gradient(105deg,#342f20,#242321); }
+.technical-signal-banner > strong { font-size: 12px; }
+.technical-signal-banner > span { font-size: 10px; }
+.technical-signal-banner > small { font-size: 9px; }
+.technical-signal-banner.signal-buy { background: linear-gradient(105deg,#17352d,#1b2425); }
+.technical-signal-banner.signal-sell { background: linear-gradient(105deg,#382326,#242124); }
+.technical-signal-banner.signal-wait { background: linear-gradient(105deg,#342f20,#242321); }
 
 .market-sidepanel { border-color: var(--terminal-border); }
 .quote-card { padding: 12px 13px 10px; border-color: var(--terminal-border); background: linear-gradient(145deg,#1c2229,#191f25); }
