@@ -9,6 +9,11 @@ button { font: inherit; }
 .active-symbol > span:not(.symbol-logo) { overflow: hidden; color: #abb0ba; text-overflow: ellipsis; font-size: 11px; }
 .symbol-logo { position: relative; width: 24px; height: 24px; display: grid; place-items: center; flex: 0 0 auto; overflow: hidden; border: 1px solid color-mix(in srgb,var(--symbol-color,#168bcc) 40%,transparent); border-radius: 50%; color: white; background: color-mix(in srgb,var(--symbol-color,#168bcc) 24%,#22252a); font-size: 10px; font-weight: 700; }
 .symbol-logo-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
+.ticker-monogram .symbol-logo-fallback { border-radius: inherit; color: #fff; background: linear-gradient(145deg,color-mix(in srgb,var(--symbol-color,#168bcc) 88%,#fff),color-mix(in srgb,var(--symbol-color,#168bcc) 72%,#111)); font-size: 8px; font-weight: 800; letter-spacing: -.5px; }
+.watch-row-search-result { background: #25282d; }
+.watch-row-search-result .watch-quote strong { color: #0bbd82; font-size: 9px; }
+.watch-row-search-result .watch-quote small { color: #8e949e; }
+.watchlist-search-heading { padding: 8px 10px 4px; color: #858b96; font-size: 8px; font-weight: 600; letter-spacing: .3px; }
 .issuer-logo-image { position: absolute; inset: 2px; width: calc(100% - 4px); height: calc(100% - 4px); border-radius: 50%; object-fit: contain; background: #fff; }
 .leverage-tag,.instrument-pill { padding: 2px 5px; border: 1px solid #5653a2; border-radius: 4px; color: #aaa1ff; background: #2b2948; font-size: 8px; font-weight: 600; }
 .quote-change { font-size: 10px; font-weight: 600; }

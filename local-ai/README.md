@@ -23,10 +23,10 @@ Untuk alternatif Render, `render.yaml` tetap tersedia. Layanan gratis dapat tidu
 
 ## Sumber dan keterlambatan data
 
-- Aplikasi mengambil IHSG (`^JKSE`) dan watchlist saham dari endpoint grafik Yahoo Finance, lalu memeriksa pembaruan setiap 30 detik. Interval ini mengatur frekuensi polling aplikasi, bukan menjamin penyedia menerbitkan harga baru dalam 30 detik.
+- Aplikasi mengambil IHSG (`^JKSE`) dan kuotasi watchlist pilihan dari endpoint grafik Yahoo Finance, lalu memeriksa pembaruan setiap 30 detik. Cari ticker atau nama emiten lain untuk menemukan dan menambahkannya ke watchlist; grafik dan kuotasi emiten tersebut dimuat saat dipilih agar tidak meminta data semua saham sekaligus. Interval polling bukan jaminan penyedia menerbitkan harga baru setiap 30 detik.
 - Gunakan tombol `−`/`+` untuk menghapus atau menambahkan ticker terpilih ke watchlist, tombol bintang untuk mengatur favorit, dan filter watchlist untuk menampilkan favorit. Perubahan ini berlaku selama halaman terbuka.
 - Tombol perbarui mengambil data lagi tanpa memuat ulang halaman.
-- Logo emiten lokal ditampilkan pada ticker yang tersedia; ticker tanpa logo memakai inisial sebagai fallback.
+- Logo lokal ditampilkan untuk ticker yang memiliki aset logo; ticker lainnya memakai monogram berwarna yang dibuat dari kode saham.
 - Pilih ticker di watchlist untuk melihat candlestick, volume, RSI, dan moving average dengan periode 1D, 5D, 1M, 3M, 6M, 1Y, 5Y, atau seluruh histori.
 - Gunakan alat Trendline (pilih dua titik) atau Garis harga (pilih satu titik) untuk menambahkan anotasi manual pada chart. Undo dan Hapus gambar hanya memengaruhi anotasi ticker yang sedang dipilih; anotasi tersimpan selama halaman tetap terbuka.
 - Sinyal teknikal AI untuk ticker terpilih diperbarui setiap 30 detik menggunakan Gemini 3.6 Flash dan candle Yahoo Finance 5 menit dari beberapa hari terakhir. Analisis multi-indikator membantu mengurangi WAIT yang tidak perlu, tetapi WAIT tetap mungkin saat indikator berimbang atau bertentangan. Panah AI BUY/SELL tampil pada candle terbaru; status WAIT tidak menampilkan panah. Ini klasifikasi edukasi, bukan feed real-time terjamin atau rekomendasi investasi personal, dan tidak menjamin akurasi maupun hasil.

@@ -109,10 +109,10 @@ function Icon({ name, size = 16 }) {
 
 function SymbolLogo({ ticker, color }) {
   const [imageFailed, setImageFailed] = useState(false);
-  const fallback = ticker === "IHSG" ? "▤" : ticker.slice(0, 1);
+  const fallback = ticker === "IHSG" ? "▤" : ticker.slice(0, 2);
 
   return (
-    <span className="symbol-logo" style={{ "--symbol-color": color }} aria-hidden="true">
+    <span className={`symbol-logo ${ticker !== "IHSG" && imageFailed ? "ticker-monogram" : ""}`} style={{ "--symbol-color": color }} aria-hidden="true">
       <span className="symbol-logo-fallback">{fallback}</span>
       {ticker !== "IHSG" && !imageFailed && (
         <img
@@ -248,6 +248,7 @@ export default function App() {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [favoriteTickers, setFavoriteTickers] = useState([]);
   const [removedTickers, setRemovedTickers] = useState([]);
+  const [addedTickers, setAddedTickers] = useState([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [activeNavigation, setActiveNavigation] = useState("Watchlist");
   const [showAverages, setShowAverages] = useState(true);
@@ -259,12 +260,32 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
-  const quotes = useMemo(() => [marketData?.index, ...(marketData?.stocks ?? [])].filter(Boolean), [marketData]);
+  const quotes = useMemo(() => {
+    const stockQuotes = new Map((marketData?.stocks ?? []).map((quote) => [quote.ticker, quote]));
+    if (stockData) stockQuotes.set(stockData.ticker, stockData);
+    const watchlistTickers = new Set([
+      ...marketData?.stocks.map(({ ticker }) => ticker) ?? [],
+      ...addedTickers,
+    ]);
+    const instruments = marketData?.instruments ?? marketData?.stocks ?? [];
+    const stocks = instruments
+      .filter(({ ticker }) => watchlistTickers.has(ticker))
+      .map((instrument) => stockQuotes.get(instrument.ticker) ?? instrument);
+    return [marketData?.index, ...stocks].filter(Boolean);
+  }, [marketData, stockData, addedTickers]);
   const visibleQuotes = quotes.filter((quote) => (
     !removedTickers.includes(quote.ticker)
     && (!showFavorites || favoriteTickers.includes(quote.ticker))
     && `${quote.ticker} ${quote.name}`.toLowerCase().includes(query.toLowerCase())
   ));
+  const searchResults = query.trim()
+    ? (marketData?.instruments ?? [])
+      .filter((instrument) => (
+        !quotes.some((quote) => quote.ticker === instrument.ticker)
+        && `${instrument.ticker} ${instrument.name} ${instrument.sector}`.toLowerCase().includes(query.trim().toLowerCase())
+      ))
+      .slice(0, 12)
+    : emptyArray;
   const selectedStockData = stockData?.ticker === selectedTicker ? stockData : null;
   const selectedQuote = quotes.find((quote) => quote.ticker === selectedTicker) ?? selectedStockData;
   const candles = selectedStockData?.range === period ? selectedStockData.chart : emptyArray;
@@ -472,9 +493,20 @@ export default function App() {
               <SymbolLogo ticker={quote.ticker} color={quote.color} />
               <span className="watch-name"><strong>{quote.ticker}</strong><small>{quote.name}</small></span>
               {quote.sparkline?.length > 1 && <Sparkline values={quote.sparkline} positive={quote.changePercent >= 0} />}
-              <span className="watch-quote"><strong>{formatPrice(quote.price)}</strong><small className={quote.changePercent >= 0 ? "positive" : "negative"}>{quote.change >= 0 ? "↗" : "↘"} {formatChange(quote.changePercent)}</small></span>
+              <span className="watch-quote"><strong>{formatPrice(quote.price)}</strong><small className={Number.isFinite(quote.changePercent) ? quote.changePercent >= 0 ? "positive" : "negative" : ""}>{Number.isFinite(quote.changePercent) ? `${quote.change >= 0 ? "↗" : "↘"} ${formatChange(quote.changePercent)}` : quote.sector}</small></span>
             </button>)}
-            {!visibleQuotes.length && <div className="watchlist-empty">{marketError || (showFavorites ? "Belum ada saham favorit." : "Saham tidak ditemukan.")}</div>}
+            {searchResults.length > 0 && <div className="watchlist-search-heading">EMITEN LAINNYA · KLIK UNTUK MENAMBAHKAN</div>}
+            {searchResults.map((instrument) => <button key={instrument.ticker} className="watch-row watch-row-search-result" onClick={() => {
+              setAddedTickers((current) => current.includes(instrument.ticker) ? current : [...current, instrument.ticker]);
+              setRemovedTickers((current) => current.filter((ticker) => ticker !== instrument.ticker));
+              setSelectedTicker(instrument.ticker);
+              setQuery("");
+            }}>
+              <SymbolLogo ticker={instrument.ticker} color={instrument.color} />
+              <span className="watch-name"><strong>{instrument.ticker}</strong><small>{instrument.name}</small></span>
+              <span className="watch-quote"><strong>＋ Tambah</strong><small>{instrument.sector}</small></span>
+            </button>)}
+            {!visibleQuotes.length && !searchResults.length && <div className="watchlist-empty">{marketError || (showFavorites ? "Belum ada saham favorit." : "Saham tidak ditemukan.")}</div>}
           </div>
           <div className="watchlist-foot"><span><i /> {watchlistCount} instrumen</span><span>Yahoo Finance · delay mungkin terjadi</span></div>
         </aside>
