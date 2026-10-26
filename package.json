@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm --prefix local-ai run build",
+    "build": "npm --prefix local-ai ci && npm --prefix local-ai run build",
     "start": "node server.js"
   },
   "dependencies": {
